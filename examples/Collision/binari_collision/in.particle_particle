@@ -122,7 +122,8 @@ thermo        ${thermofreq}
 thermo_modify lost ignore norm no
 
 # Check time step and initialize dump file
-fix           ctg all check/timestep/gran 1 0.01 0.01
+#fix           ctg all check/timestep/gran 1 0.01 0.01
+fix           ctg all test 1 0.01 0.01
 run           1
 unfix         ctg
 
