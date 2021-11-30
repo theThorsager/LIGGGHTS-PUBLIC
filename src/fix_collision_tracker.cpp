@@ -127,7 +127,6 @@ void FixCollisionTracker::end_of_step()
   // pair_gran_base.h in compute_force()
   PairGran* pair_gran = static_cast<PairGran*>(force->pair_match("gran", 1));
 
-
   // No... Granular gran = new Granular(lmp, pair_gran, 4832579328);
 
   PairGran *pg = pair_gran;
@@ -140,7 +139,8 @@ void FixCollisionTracker::end_of_step()
   int * ilist = pg->list->ilist;
   const int dnum = pg->dnum();
   int * numneigh = pg->list->numneigh;
-
+double **v = atom->v;
+  double **f = atom->f;
   for (int ii = 0; ii < inum; ii++) {
     const int i = ilist[ii];
 
@@ -160,8 +160,10 @@ void FixCollisionTracker::end_of_step()
       sidata.contact_history = all_contact_hist ? &all_contact_hist[dnum*jj] : NULL;
   
       print_contact_status(sidata, pair_gran);  
+      print_atom_pair_info(i,j);
     }
   }
+
 //  int particles_were_in_contact_offset = hsetup->add_history_value("particles_were_in_contact","0");
   // enum {SURFACES_FAR, SURFACES_CLOSE, SURFACES_INTERSECT};
 //  double *const particles_were_in_contact = &sidata.contact_history[particles_were_in_contact_offset];
@@ -201,6 +203,17 @@ void FixCollisionTracker::end_of_step()
 */
 }
 
+/* ---------------------------------------------------------------------- */
+
+void FixCollisionTracker::print_atom_pair_info(int i, int j)
+{
+  double **x = atom->x;
+  double **v = atom->v;
+  //double **f = atom->f;
+  printf("Atom i[%d]: x[%f,%f,%f]; Atom j[%d]: x[%f,%f,%f]\n", i,x[i][0],x[i][1],x[i][2],j,x[j][0],x[j][1],x[j][2]);
+  printf("Atom i[%d]: v[%f,%f,%f]; Atom j[%d]: v[%f,%f,%f]\n", i,v[i][0],v[i][1],v[i][2],j,v[j][0],v[j][1],v[j][2]);
+
+}
 
 /* ---------------------------------------------------------------------- */
 

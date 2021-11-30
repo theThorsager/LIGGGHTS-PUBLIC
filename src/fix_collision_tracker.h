@@ -65,6 +65,7 @@ class FixCollisionTracker : public Fix {
   double compute_scalar();
 
   void print_contact_status(SurfacesIntersectData &, IContactHistorySetup*);
+  void print_atom_pair_info(int i, int j);
 
  private:
 
