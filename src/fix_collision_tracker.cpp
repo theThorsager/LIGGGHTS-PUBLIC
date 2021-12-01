@@ -74,6 +74,11 @@
 #include "style_rolling_model.h"
 #include "style_cohesion_model.h"
 
+#include "fix.h"
+#include "fix_insert.h"
+#include "fix_insert_stream.h"
+#include "fix_insert_stream_predefined.h"
+
 
 using namespace LAMMPS_NS;
 using namespace FixConst;
@@ -87,6 +92,9 @@ FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
   if (narg < 4) error->all(FLERR,"Illegal fix collision/tracker command, not enough arguments");
 
   // int iarg = 6;
+
+  PairGran* pair_gran = static_cast<PairGran*>(force->pair_match("gran", 1));
+  particles_were_in_contact_offset = pair_gran->get_history_offset("particles_were_in_contact", "0");
 
   nevery = atoi(arg[3]);
 
@@ -115,39 +123,35 @@ void FixCollisionTracker::init()
 
 void FixCollisionTracker::end_of_step()
 {
-
-  // SurfacesIntersectData
-  // sidata = ...
-  // pair_gran_base.h
-  // surface_model_superquadric.h
-
-  // sidata;
-  // Pair_Gran gran = static_cast<Pair_Gran>force->pair;
-  //
   // pair_gran_base.h in compute_force()
   PairGran* pair_gran = static_cast<PairGran*>(force->pair_match("gran", 1));
-
-  // No... Granular gran = new Granular(lmp, pair_gran, 4832579328);
 
   PairGran *pg = pair_gran;
   SurfacesIntersectData sidata;
   double ** first_contact_hist = pg->listgranhistory ? pg->listgranhistory->firstdouble : NULL;
-
   int ** firstneigh = pg->list->firstneigh;
 
   int inum = pg->list->inum;
   int * ilist = pg->list->ilist;
   const int dnum = pg->dnum();
   int * numneigh = pg->list->numneigh;
-double **v = atom->v;
+  double **v = atom->v;
   double **f = atom->f;
+
+  std::vector<FixInsertStreamPredefined*> fix_insert;
+  int nfix_insert = modify->n_fixes_style("insert/stream/predefined");
+  for (int i = 0; i < nfix_insert; i++)
+  {
+      FixInsertStreamPredefined * fix = static_cast<FixInsertStreamPredefined*>(modify->find_fix_style("insert/stream/predefined", i));
+      if (fix->has_inserted())
+          fix_insert.push_back(fix);
+  }
+
   for (int ii = 0; ii < inum; ii++) {
     const int i = ilist[ii];
-
+    sidata.i = i;
   
     double * const all_contact_hist = first_contact_hist ? first_contact_hist[i] : NULL;
-
-    sidata.i = i;
 
     int * const jlist = firstneigh[i];
     const int jnum = numneigh[i];
@@ -156,30 +160,21 @@ double **v = atom->v;
       const int j = jlist[jj] & NEIGHMASK;
       sidata.j = j;
 
-
       sidata.contact_history = all_contact_hist ? &all_contact_hist[dnum*jj] : NULL;
-  
-      print_contact_status(sidata, pair_gran);  
+ 
+      if (!fix_insert.empty())
+      {
+          std::vector<FixInsertStreamPredefined*>::iterator it = fix_insert.begin();
+          for (; it != fix_insert.end(); it++)
+          {
+              (*it)->copy_history(i, j, sidata.contact_history);
+          }
+      }
+
+      print_contact_status(sidata);  
       print_atom_pair_info(i,j);
     }
   }
-
-//  int particles_were_in_contact_offset = hsetup->add_history_value("particles_were_in_contact","0");
-  // enum {SURFACES_FAR, SURFACES_CLOSE, SURFACES_INTERSECT};
-//  double *const particles_were_in_contact = &sidata.contact_history[particles_were_in_contact_offset];
-  // if (*particles_were_in_contact == SURFACES_INTERSECT)
-
-
-
-  // forevery particle
-  // check collision with every other particle
-  //
-  // It saves the previous intersection point somewhere (not necessarelly a intersection tho)
-  // Hopefully has a bool if there was a proper intersection
-
-
-
-//  int particles_were_in_contact_offset = gran->add_history_value("particles_were_in_contact","0");
 /*
   double **velocity = atom->v;
   int n = atom->nlocal;
@@ -217,15 +212,12 @@ void FixCollisionTracker::print_atom_pair_info(int i, int j)
 
 /* ---------------------------------------------------------------------- */
 
-void FixCollisionTracker::print_contact_status(SurfacesIntersectData& sidata, IContactHistorySetup* hsetup)
+void FixCollisionTracker::print_contact_status(SurfacesIntersectData& sidata) //, IContactHistorySetup* hsetup)
 {
-  int particles_were_in_contact_offset = hsetup->add_history_value("particles_were_in_contact","0");
   double *const particles_were_in_contact = &sidata.contact_history[particles_were_in_contact_offset];
 
-  fprintf(screen , "Particles are: %i\n", *particles_were_in_contact);
-  fprintf(screen , "ENUM are: %i\n", SURFACES_INTERSECT);
+  fprintf(screen, "The offset is: %i\n", particles_were_in_contact_offset);
   fprintf(screen , "if statment %i\n", *particles_were_in_contact == SURFACES_INTERSECT);
-
 
   /*
   if (*particles_were_in_contact == SURFACES_INTERSECT) {

@@ -64,11 +64,12 @@ class FixCollisionTracker : public Fix {
   void end_of_step();
   double compute_scalar();
 
-  void print_contact_status(SurfacesIntersectData &, IContactHistorySetup*);
+  void print_contact_status(SurfacesIntersectData &); 
   void print_atom_pair_info(int i, int j);
 
  private:
 
+  int particles_were_in_contact_offset;
   enum {SURFACES_FAR, SURFACES_CLOSE, SURFACES_INTERSECT};
   double InternalValue;
   /*
