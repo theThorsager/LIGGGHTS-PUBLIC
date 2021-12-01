@@ -40,6 +40,7 @@
     Copyright 2016-     CFDEMresearch GmbH, Linz
 ------------------------------------------------------------------------- */
 
+#include <cstring>
 #ifdef PAIR_CLASS
 
 #else
@@ -170,6 +171,16 @@ public:
     history_arg.push_back(HistoryArg(name, newtonflag));
     dnum_pairgran++;
     return offset;
+  }
+
+  int get_history_offset(std::string name, std::string newtonflag)
+  {
+    for (int i = 0; i < history_arg.size(); ++i)
+    {
+      if (!history_arg[i].name.compare(name))
+        if (!history_arg[i].newtonflag.compare(newtonflag))
+          return i;
+    }
   }
 
   void add_dissipated_energy(const double e)
