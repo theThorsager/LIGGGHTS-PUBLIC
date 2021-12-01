@@ -80,6 +80,7 @@
 #include "fix_insert_stream_predefined.h"
 
 
+
 using namespace LAMMPS_NS;
 using namespace FixConst;
 using namespace LIGGGHTS::ContactModels;
@@ -98,10 +99,8 @@ FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
 
   nevery = atoi(arg[3]);
 
-  InternalValue = 0.0;
-  scalar_flag = 1;
-  // global_freq = nevery;
-  // extscalar = 1;
+  // We will add options later
+  time_step_counter = 0;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -123,6 +122,9 @@ void FixCollisionTracker::init()
 
 void FixCollisionTracker::end_of_step()
 {
+  //time_step_counter++;
+  //printf("timestep %d\n", time_step_counter);
+  
   // pair_gran_base.h in compute_force()
   PairGran* pair_gran = static_cast<PairGran*>(force->pair_match("gran", 1));
 
@@ -216,8 +218,8 @@ void FixCollisionTracker::print_contact_status(SurfacesIntersectData& sidata) //
 {
   double *const particles_were_in_contact = &sidata.contact_history[particles_were_in_contact_offset];
 
-  fprintf(screen, "The offset is: %i\n", particles_were_in_contact_offset);
-  fprintf(screen , "if statment %i\n", *particles_were_in_contact == SURFACES_INTERSECT);
+//  fprintf(screen, "The offset is: %i\n", particles_were_in_contact_offset);
+//  fprintf(screen , "if statment %i\n", *particles_were_in_contact == SURFACES_INTERSECT);
 
   /*
   if (*particles_were_in_contact == SURFACES_INTERSECT) {
@@ -226,6 +228,9 @@ void FixCollisionTracker::print_contact_status(SurfacesIntersectData& sidata) //
     fprintf(screen , "Particles %i and %i are not in contact\n", sidata.i, sidata.j);
   }
   */
+  bool intersect = *particles_were_in_contact == SURFACES_INTERSECT;
+//  bool intersect = checkSurfaceIntersect(sidata);
+  printf("Particles(%d,%d) intersect %d\n", sidata.i, sidata.j, intersect);
 } 
 
 /* ---------------------------------------------------------------------- */
@@ -234,3 +239,79 @@ double FixCollisionTracker::compute_scalar()
 {
   return InternalValue;
 }
+
+/* ---------------------------------------------------------------------- */
+
+bool FixCollisionTracker::checkSurfaceIntersect(SurfacesIntersectData & sidata)
+    {
+      sidata.is_non_spherical = true;
+      bool particles_in_contact = false;
+      //double *const prev_step_point = &sidata.contact_history[contact_point_offset]; //contact points
+      //double *const inequality_start = &sidata.contact_history[inequality_start_offset];
+      //double *const particles_were_in_contact = &sidata.contact_history[particles_were_in_contact_offset];
+
+      const int iPart = sidata.i;
+      const int jPart = sidata.j;
+
+      #ifdef LIGGGHTS_DEBUG
+        if(std::isnan(vectorMag3D(atom->x[iPart])))
+          error->one(FLERR,"atom->x[iPart] is NaN!");
+        if(std::isnan(vectorMag4D(atom->quaternion[iPart])))
+          error->one(FLERR,"atom->quaternion[iPart] is NaN!");
+        if(std::isnan(vectorMag3D(atom->x[jPart])))
+          error->one(FLERR,"atom->x[jPart] is NaN!");
+        if(std::isnan(vectorMag4D(atom->quaternion[jPart])))
+          error->one(FLERR,"atom->quaternion[jPart] is NaN!");
+      #endif
+
+      particle_i.set(atom->x[iPart], atom->quaternion[iPart], atom->shape[iPart], atom->blockiness[iPart]);
+      particle_j.set(atom->x[jPart], atom->quaternion[jPart], atom->shape[jPart], atom->blockiness[jPart]);
+
+      /*
+      unsigned int int_inequality_start = MathExtraLiggghtsNonspherical::round_int(*inequality_start);
+      bool obb_intersect = false;
+      if(*particles_were_in_contact == SURFACES_INTERSECT)
+        obb_intersect = true; //particles had overlap on the previous time step, skipping OBB intersection check
+      else
+        obb_intersect = MathExtraLiggghtsNonspherical::obb_intersect(&particle_i, &particle_j, int_inequality_start);
+      */
+      bool obb_intersect = false;
+      obb_intersect = MathExtraLiggghtsNonspherical::obb_intersect(&particle_i, &particle_j);
+      if(obb_intersect) {//OBB intersect particles in possible contact
+
+        double fi, fj;
+        const double ri = cbrt(particle_i.shape[0]*particle_i.shape[1]*particle_i.shape[2]);
+        const double rj = cbrt(particle_j.shape[0]*particle_j.shape[1]*particle_j.shape[2]);
+        double ratio = ri / (ri + rj);
+
+        /*
+        if(*particles_were_in_contact == SURFACES_FAR)
+          MathExtraLiggghtsNonspherical::calc_contact_point_if_no_previous_point_avaialable(sidata, &particle_i, &particle_j, sidata.contact_point, fi, fj, this->error);
+        else
+          MathExtraLiggghtsNonspherical::calc_contact_point_using_prev_step(sidata, &particle_i, &particle_j, ratio, update->dt, prev_step_point, sidata.contact_point, fi, fj, this->error);
+        */
+        MathExtraLiggghtsNonspherical::calc_contact_point_if_no_previous_point_avaialable(sidata, &particle_i, &particle_j, sidata.contact_point, fi, fj, this->error);
+        //LAMMPS_NS::vectorCopy3D(sidata.contact_point, prev_step_point); //store contact point in contact history for the next DEM time step
+
+        #ifdef LIGGGHTS_DEBUG
+          if(std::isnan(vectorMag3D(sidata.contact_point)))
+            error->one(FLERR,"sidata.contact_point is NaN!");
+        #endif
+        
+        particles_in_contact = std::max(fi, fj) < 0.0;
+
+        if(particles_in_contact) {
+          //*particles_were_in_contact = SURFACES_INTERSECT;
+        } 
+        else
+        {
+          //*particles_were_in_contact = SURFACES_CLOSE;
+        }
+       } 
+       else
+       {
+         //*particles_were_in_contact = SURFACES_FAR;
+       }
+      //*inequality_start = static_cast<double>(int_inequality_start);
+      return particles_in_contact;
+    }
