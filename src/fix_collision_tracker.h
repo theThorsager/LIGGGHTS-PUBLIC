@@ -50,6 +50,8 @@ FixStyle(collision/tracker,FixCollisionTracker)
 
 #include "fix.h"
 #include "contact_interface.h"
+#include "superquadric.h"
+#include "pair_gran.h"
 
 using namespace LIGGGHTS;
 using namespace ContactModels;
@@ -64,13 +66,19 @@ class FixCollisionTracker : public Fix {
   void end_of_step();
   double compute_scalar();
 
-  void print_contact_status(SurfacesIntersectData &, IContactHistorySetup*);
+  //void print_contact_status(SurfacesIntersectData &, IContactHistorySetup*);
+  void print_contact_status(SurfacesIntersectData& sidata, PairGran* pair_gran);
   void print_atom_pair_info(int i, int j);
+  bool checkSurfaceIntersect(SurfacesIntersectData & sidata);
 
  private:
 
   enum {SURFACES_FAR, SURFACES_CLOSE, SURFACES_INTERSECT};
   double InternalValue;
+  int time_step_counter;
+  Superquadric particle_i;
+  Superquadric particle_j;
+
   /*
   class Properties* properties;
   class PairGran* pg;
