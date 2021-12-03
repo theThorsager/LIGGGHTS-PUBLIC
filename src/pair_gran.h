@@ -40,7 +40,6 @@
     Copyright 2016-     CFDEMresearch GmbH, Linz
 ------------------------------------------------------------------------- */
 
-#include <cstring>
 #ifdef PAIR_CLASS
 
 #else
@@ -57,6 +56,7 @@
 #include "fix_property_atom.h"
 #include <vector>
 #include <string>
+#include <cstring>
 
 namespace LCM = LIGGGHTS::ContactModels;
 
@@ -181,6 +181,7 @@ public:
         if (!history_arg[i].newtonflag.compare(newtonflag))
           return i;
     }
+    return -1;
   }
 
   void add_dissipated_energy(const double e)
