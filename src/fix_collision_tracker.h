@@ -70,6 +70,8 @@ class FixCollisionTracker : public Fix {
   void print_contact_status(SurfacesIntersectData &); 
   void print_atom_pair_info(int i, int j);
   bool checkSurfaceIntersect(SurfacesIntersectData & sidata);
+  void compute_local_contact(SurfacesIntersectData& sidata, double *iResult, double *jResult);
+
 
   void compute_normal(SurfacesIntersectData &);
   double compute_relative_velocity(SurfacesIntersectData &);
