@@ -62,18 +62,28 @@ class FixCollisionTracker : public Fix {
  public:
   FixCollisionTracker(class LAMMPS *, int, char **);
   int setmask();
-  // void init();
-  void end_of_step();
+  void init();
+//  void pre_force();
+  void post_force(int);
   double compute_scalar();
 
   void print_contact_status(SurfacesIntersectData &); 
   void print_atom_pair_info(int i, int j);
   bool checkSurfaceIntersect(SurfacesIntersectData & sidata);
 
+  void compute_normal(SurfacesIntersectData &);
+  double compute_relative_velocity(SurfacesIntersectData &);
  private:
 
-  int particles_were_in_contact_offset;
   enum {SURFACES_FAR, SURFACES_CLOSE, SURFACES_INTERSECT};
+  int pre_particles_were_in_contact_offset;
+  int particles_were_in_contact_offset;
+  int contact_point_offset;
+  class PairGran *pair_gran;
+
+  int ncollisions;
+
+
   double InternalValue;
   int time_step_counter;
   Superquadric particle_i;
