@@ -80,6 +80,7 @@
 #include "fix_insert_stream.h"
 #include "fix_insert_stream_predefined.h"
 
+#include "math_extra_liggghts_nonspherical.h"
 
 
 using namespace LAMMPS_NS;
@@ -379,6 +380,23 @@ void FixCollisionTracker::compute_normal(SurfacesIntersectData& sidata)
   vectorSubtract3D(particle_i.gradient,particle_j.gradient, sidata.en);
   vectorNormalize3D(sidata.en);
 }
+
+void FixCollisionTracker::compute_local_contact(SurfacesIntersectData& sidata, double *iResult, double *jResult)
+{
+  double *const prev_step_point = &sidata.contact_history[contact_point_offset];
+  int iPart = sidata.i;
+  int jPart = sidata.j;
+
+  double iLocal[3];
+  double jLocal[3];
+
+  vectorSubtract3D(prev_step_point, atom->x[iPart], iLocal);
+  vectorSubtract3D(prev_step_point, atom->x[jPart], jLocal);
+
+  MathExtraLiggghtsNonspherical::rotate_global2local(atom->quaternion[iPart], iLocal, iResult);
+  MathExtraLiggghtsNonspherical::rotate_global2local(atom->quaternion[jPart], jLocal, jResult);
+}
+
 
 bool FixCollisionTracker::checkSurfaceIntersect(SurfacesIntersectData & sidata)
     {
