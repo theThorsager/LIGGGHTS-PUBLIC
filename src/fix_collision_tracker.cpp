@@ -127,7 +127,7 @@ FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
   while (iarg < narg) {
     if (strcmp(arg[iarg],"file") == 0) {
       if (iarg+2 > narg) error->all(FLERR,"Illegal fix print command");
-      if (me == 0) {
+      if (1){ //me == 0) {
         int n = strlen(arg[iarg+1]) + 1;
         filename = new char[n];
         strcpy(filename,arg[iarg+1]);
@@ -168,7 +168,7 @@ void FixCollisionTracker::init()
 
 void FixCollisionTracker::end_of_step()
 {
-  if (me == 0) {
+  if (1){ //me == 0) {
     openfile();
     if (fp)
     {
@@ -195,17 +195,19 @@ void FixCollisionTracker::openfile()
   char *filecurrent = filename;
   
   char *filestar = filecurrent;
-  filecurrent = new char[strlen(filestar) + 16];
+  filecurrent = new char[strlen(filestar) + 16 + 4];
   char *ptr = strchr(filestar,'*');
   if (ptr) {
     *ptr = '\0';
-    sprintf(filecurrent,"%s" BIGINT_FORMAT "%s",
-            filestar,update->ntimestep,ptr+1);
+    sprintf(filecurrent,"%s" BIGINT_FORMAT "_%i" "%s",
+            filestar,update->ntimestep, me, ptr+1);
     *ptr = '*';
       
     fp = fopen(filecurrent,"w");
-  } else
-    fp = fopen(filename, "w");
+  } else {
+    sprintf(filecurrent,"%i_%s", me, filestar);
+    fp = fopen(filename, "a");
+  }
 
   if (fp == NULL) error->one(FLERR,"Cannot open dump file");
 
