@@ -45,6 +45,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <cmath>
+#include <vector>
 #include "atom.h"
 #include "pair.h"
 #include "update.h"
@@ -88,6 +89,8 @@ using namespace LAMMPS_NS;
 using namespace FixConst;
 using namespace LIGGGHTS::ContactModels;
 
+#define DELTA 1000
+
 /* ---------------------------------------------------------------------- */
 
 FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
@@ -98,25 +101,60 @@ FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
   // int iarg = 6;
 
   pair_gran = static_cast<PairGran*>(force->pair_match("gran", 1));
-  //pre_particles_were_in_contact_offset = pair_gran->add_history_value("pre_particles_were_in_contact", "0");
-  pre_particles_were_in_contact_offset = -1; // = pair_gran->add_history_value("pre_particles_were_in_contact", "0");
+  particles_were_in_contact_offset = pair_gran->get_history_offset("particles_were_in_contact", "0");
+  contact_point_offset = pair_gran->get_history_offset("cpx", "0");
+  pre_particles_were_in_contact_offset = pair_gran->get_history_offset("pre_particles_were_in_contact", "0"); // = pair_gran->add_history_value("pre_particles_were_in_contact", "0");
 
   
   ncollisions = 0;
 
+  size_local_rows = 0;
+  size_local_cols = 0;
 
+//  memory->create(vector_local, DELTA, "fix/collision/tracker");
+//  vector_local_size = DELTA;
+
+  local_freq = 1;
+  local_flag = 1;
   nevery = atoi(arg[3]);
 
   // We will add options later
   time_step_counter = 0;
+
+  MPI_Comm_rank(world,&me); 
+
+  fp = NULL;
+
+  int iarg = 4;
+  while (iarg < narg) {
+    if (strcmp(arg[iarg],"file") == 0) {
+      if (iarg+2 > narg) error->all(FLERR,"Illegal fix print command");
+      if (me == 0) {
+        int n = strlen(arg[iarg+1]) + 1;
+        filename = new char[n];
+        strcpy(filename,arg[iarg+1]);
+      }
+      iarg += 2;
+    } else
+    {
+        error->all(FLERR,"Illegal fix print command");
+    }
+  }
+
 }
 
+FixCollisionTracker::~FixCollisionTracker()
+{
+  memory->destroy(vector_local);
+}
 /* ---------------------------------------------------------------------- */
 
 int FixCollisionTracker::setmask()
 {
   int mask = 0;
+//  mask |= PRE_FORCE;
   mask |= POST_FORCE;
+  mask |= END_OF_STEP;
   return mask;
 }
 
@@ -124,20 +162,92 @@ int FixCollisionTracker::setmask()
 
 void FixCollisionTracker::init()
 {
-
-  particles_were_in_contact_offset = pair_gran->get_history_offset("particles_were_in_contact", "0");
-  contact_point_offset = pair_gran->get_history_offset("cpx", "0");
-  pre_particles_were_in_contact_offset = pair_gran->add_history_value("pre_particles_were_in_contact", "0");
-  printf("offsets: %d,%d,%d,\n", particles_were_in_contact_offset,pre_particles_were_in_contact_offset,contact_point_offset);
-  
+  // Don't know why this did not work in the constructor
+ // pre_particles_were_in_contact_offset = pair_gran->add_history_value("pre_particles_were_in_contact", "0");
 }
 
 /* ---------------------------------------------------------------------- */
 
+void FixCollisionTracker::end_of_step()
+{
+  if (me == 0) {
+    openfile();
+    if (fp)
+    {
+      std::vector<double>::iterator rel_it = rel_vels.begin();
+      std::vector<double>::iterator lcol_it = lcol.begin();
+
+      while (rel_it < rel_vels.end())
+        fprintf(fp,"%f %f %f %f\n", *rel_it++, *lcol_it++, *lcol_it++, *lcol_it++);
+   
+      fflush(fp);
+      rel_vels.clear();
+      lcol.clear();
+      fclose(fp);
+    }
+  }
+}
 
 /* ---------------------------------------------------------------------- */
 
-void FixCollisionTracker::post_force(int inumber)
+void FixCollisionTracker::openfile()
+{
+  // if one file per timestep, replace '*' with current timestep
+  
+  char *filecurrent = filename;
+  
+  char *filestar = filecurrent;
+  filecurrent = new char[strlen(filestar) + 16];
+  char *ptr = strchr(filestar,'*');
+  if (ptr) {
+    *ptr = '\0';
+    sprintf(filecurrent,"%s" BIGINT_FORMAT "%s",
+            filestar,update->ntimestep,ptr+1);
+    *ptr = '*';
+      
+    fp = fopen(filecurrent,"w");
+  } else
+    fp = fopen(filename, "w");
+
+  if (fp == NULL) error->one(FLERR,"Cannot open dump file");
+
+  // delete string with timestep replaced
+
+  delete [] filecurrent;
+}
+
+/* ---------------------------------------------------------------------- */
+/*
+void FixCollisionTracker::pre_force(int vflag)
+{
+  PairGran *pg = pair_gran;
+  double ** first_contact_hist = pg->listgranhistory ? pg->listgranhistory->firstdouble : NULL;
+  int ** firstneigh = pg->list->firstneigh;
+
+  int inum = pg->list->inum;
+  int * ilist = pg->list->ilist;
+  const int dnum = pg->dnum();
+  int * numneigh = pg->list->numneigh;
+  
+  SurfacesIntersectData sidata;
+  for (int ii = 0; ii < inum; ii++) {
+    const int i = ilist[ii];
+  
+    double * const all_contact_hist = first_contact_hist ? first_contact_hist[i] : NULL;
+
+    const int jnum = numneigh[i];
+
+    for (int jj = 0; jj < jnum; jj++) {
+      sidata.contact_history = all_contact_hist ? &all_contact_hist[dnum*jj] : NULL;
+      double *const prething = &sidata.contact_history[particles_were_in_contact_offset];
+      prev_intersections.push_back(prething);
+    } 
+  }
+}
+*/
+/* ---------------------------------------------------------------------- */
+
+void FixCollisionTracker::post_force(int vflag)
 {
   // Get local atom information
   int nlocal = atom->nlocal;
@@ -177,14 +287,13 @@ void FixCollisionTracker::post_force(int inumber)
       //        compute impact velocity and add to bin
       //        compute impact angle and add to bin
       //
-      print_contact_status(sidata);  
+      print_contact_status(sidata);//, iter++);  
       print_atom_pair_info(i,j);
     }
   }
 
   // particle - wall (mesh is included)
   int n_wall_fixes = modify->n_fixes_style("wall/gran");
-  //printf("n_wall_fixes: %d\n", n_wall_fixes);
 
   for (int ifix = 0; ifix < n_wall_fixes; ++ifix)
   {
@@ -268,8 +377,8 @@ void FixCollisionTracker::print_atom_pair_info(int i, int j)
   double **x = atom->x;
   double **v = atom->v;
   //double **f = atom->f;
-  printf("Atom i[%d]: x[%f,%f,%f]; Atom j[%d]: x[%f,%f,%f]\n", i,x[i][0],x[i][1],x[i][2],j,x[j][0],x[j][1],x[j][2]);
-  printf("Atom i[%d]: v[%f,%f,%f]; Atom j[%d]: v[%f,%f,%f]\n", i,v[i][0],v[i][1],v[i][2],j,v[j][0],v[j][1],v[j][2]);
+ // printf("Atom i[%d]: x[%f,%f,%f]; Atom j[%d]: x[%f,%f,%f]\n", i,x[i][0],x[i][1],x[i][2],j,x[j][0],x[j][1],x[j][2]);
+ // printf("Atom i[%d]: v[%f,%f,%f]; Atom j[%d]: v[%f,%f,%f]\n", i,v[i][0],v[i][1],v[i][2],j,v[j][0],v[j][1],v[j][2]);
 
 }
 
@@ -283,7 +392,7 @@ void FixCollisionTracker::print_atom_info(int i)
 
 /* ---------------------------------------------------------------------- */
 
-void FixCollisionTracker::print_contact_status(SurfacesIntersectData& sidata) //, IContactHistorySetup* hsetup)
+void FixCollisionTracker::print_contact_status(SurfacesIntersectData& sidata)//, int iter) //, IContactHistorySetup* hsetup)
 {
   double *const particles_were_in_contact = &sidata.contact_history[particles_were_in_contact_offset];
   double *const pre_particles_were_in_contact = &sidata.contact_history[pre_particles_were_in_contact_offset];
@@ -298,22 +407,40 @@ void FixCollisionTracker::print_contact_status(SurfacesIntersectData& sidata) //
     fprintf(screen , "Particles %i and %i are not in contact\n", sidata.i, sidata.j);
   }
   */
-  bool intersect = *particles_were_in_contact == SURFACES_INTERSECT;
   bool pre_intersect = *pre_particles_were_in_contact == SURFACES_INTERSECT;
-  printf("Particles(%d,%d), contact bool; now: %d(%f); pre: %d(%f)\n", sidata.i, sidata.j, intersect, *particles_were_in_contact, pre_intersect, *pre_particles_were_in_contact);
- 
+  bool intersect = *particles_were_in_contact == SURFACES_INTERSECT;
+
+//  printf("Particles were intersecting: %i, are: %i\n", pre_intersect, intersect); 
   if (intersect && !pre_intersect)
   {
     ++ncollisions;
     compute_normal(sidata);
     double rel_v = compute_relative_velocity(sidata);
-    printf("The relative velocity of the particles at the time of impact was: %f \n", rel_v);
-    printf("Particles(%d,%d) intersect %d\n", sidata.i, sidata.j, intersect);
-    printf("Intersection point: %f,%f,%f\n", prev_step_point[0], prev_step_point[1], prev_step_point[2]);  
-    printf("Total number of collisions: %i\n", ncollisions);
+
+    rel_vels.push_back(rel_v);
+    rel_vels.push_back(rel_v);
+
+    double point_of_contact[6];
+    compute_local_contact(sidata, point_of_contact, point_of_contact+3);
+    for (int i = 0; i < 6; ++i)
+      lcol.push_back(point_of_contact[i]);
+    /*
+    vector_local[size_local_rows++] = rel_v;
+    if (size_local_rows == vector_local_size) 
+    {
+      vector_local_size += DELTA;
+      memory->grow(vector_local, vector_local_size, "fix/collision/tracker");
+    }
+    */
+   // printf("The relative velocity of the particles at the time of impact was: %f \n", rel_v);
   }
   
-  *pre_particles_were_in_contact = *particles_were_in_contact;
+//  bool intersect = checkSurfaceIntersect(sidata);
+//  printf("Particles(%d,%d) intersect %d\n", sidata.i, sidata.j, intersect);
+//  printf("Intersection point: %f,%f,%f\n", prev_step_point[0], prev_step_point[1], prev_step_point[2]);  
+//  printf("Total number of collisions: %i\n", ncollisions); 
+
+  *pre_particles_were_in_contact = *particles_were_in_contact; 
 } 
 
 /* ---------------------------------------------------------------------- */
@@ -347,8 +474,11 @@ double FixCollisionTracker::compute_relative_velocity(SurfacesIntersectData& sid
   // relv = dot((v1-v2),sidata.en)
   double rel_v[3];
   vectorSubtract3D(a_i, a_j, rel_v);
-  return vectorDot3D(rel_v, sidata.en);
+  double res = vectorDot3D(rel_v, sidata.en);
+  return res > 0 ? res : -res;
 }
+
+/* ---------------------------------------------------------------------- */
 
 void FixCollisionTracker::compute_normal(SurfacesIntersectData& sidata)
 {
@@ -368,6 +498,8 @@ void FixCollisionTracker::compute_normal(SurfacesIntersectData& sidata)
   vectorSubtract3D(particle_i.gradient,particle_j.gradient, sidata.en);
   vectorNormalize3D(sidata.en);
 }
+
+/* ---------------------------------------------------------------------- */
 
 void FixCollisionTracker::compute_local_contact(SurfacesIntersectData& sidata, double *iResult, double *jResult)
 {
