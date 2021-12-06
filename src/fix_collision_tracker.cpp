@@ -79,6 +79,8 @@
 #include "fix_insert.h"
 #include "fix_insert_stream.h"
 #include "fix_insert_stream_predefined.h"
+#include "fix_wall_gran.h"
+#include "fix_contact_history_mesh.h"
 
 #include "math_extra_liggghts_nonspherical.h"
 
@@ -249,11 +251,13 @@ void FixCollisionTracker::pre_force(int vflag)
 
 void FixCollisionTracker::post_force(int vflag)
 {
-  //time_step_counter++;
-  //printf("timestep %d\n", time_step_counter);
-  
-  // pair_gran_base.h in compute_force()
+  // Get local atom information
+  int nlocal = atom->nlocal;
+  int *mask = atom->mask;
+  int *tag = atom->tag;
 
+  // pair_gran_base.h in compute_force()
+  // Get granular pair information and neighboor information
   PairGran *pg = pair_gran;
   double ** first_contact_hist = pg->listgranhistory ? pg->listgranhistory->firstdouble : NULL;
   int ** firstneigh = pg->list->firstneigh;
@@ -262,11 +266,10 @@ void FixCollisionTracker::post_force(int vflag)
   int * ilist = pg->list->ilist;
   const int dnum = pg->dnum();
   int * numneigh = pg->list->numneigh;
-  double **v = atom->v;
-  double **f = atom->f;
- 
-  //int iter = 0; 
+  
   SurfacesIntersectData sidata;
+
+  // particle - particle
   for (int ii = 0; ii < inum; ii++) {
     const int i = ilist[ii];
     sidata.i = i;
@@ -291,7 +294,82 @@ void FixCollisionTracker::post_force(int vflag)
     }
   }
 
-  //prev_intersections.clear();
+  // particle - wall (mesh is included)
+  int n_wall_fixes = modify->n_fixes_style("wall/gran");
+
+  for (int ifix = 0; ifix < n_wall_fixes; ++ifix)
+  {
+    FixWallGran *fwg = static_cast<FixWallGran*>(modify->find_fix_style("wall/gran",ifix));
+
+    if (fwg->is_mesh_wall())
+    {
+      int n_FixMesh = fwg->n_meshes();
+
+      for (int iMesh = 0; iMesh < n_FixMesh; iMesh++)
+      {
+        TriMesh *mesh = fwg->mesh_list()[iMesh]->triMesh();
+        int nTriAll = mesh->sizeLocal() + mesh->sizeGhost(); // Need to check how to handle ghost particles
+        FixContactHistoryMesh *fix_contact = fwg->mesh_list()[iMesh]->contactHistory();
+        if (!fix_contact) continue;
+
+        // get neighborList and numNeigh
+        FixNeighlistMesh * meshNeighlist = fwg->mesh_list()[iMesh]->meshNeighlist();
+        if (!meshNeighlist) continue;
+
+        // loop owned trinagles //(and ghost triangles)
+        for (int iTri = 0; iTri < nTriAll; iTri++)
+        {
+          const std::vector<int> & neighborList = meshNeighlist->get_contact_list(iTri);
+          const int numneigh = neighborList.size();
+
+          for (int iCont = 0; iCont < numneigh; iCont++) {
+
+            const int iPart = neighborList[iCont];
+
+            // do not need to handle ghost particles
+            if (iPart >= nlocal) continue;
+            if (!(mask[iPart] & groupbit) || !(mask[iPart] & fwg->groupbit)) continue;
+          
+            double *contact_history = get_triangle_contact_history(mesh, fix_contact, iPart, iTri);
+            if (contact_history)
+            {
+              printf("triangle: %d; particle: %d; \n", iTri, iPart);
+              print_atom_info(iPart);
+            }
+          
+          }
+        }
+      }
+    }
+    else // Is a primitive wall
+    {
+      /*
+      double **c_history = get_primitive_wall_contact_history(fwg);
+      if (c_history)
+      {
+        // loop neighbor list
+        int *neighborList;
+        int nNeigh = fwg->primitiveWall()->getNeighbors(neighborList);
+
+        for (int iCont = 0; iCont < nNeigh ; iCont++, neighborList++)
+        {
+          int iPart = *neighborList;
+          // do not need to handle ghost particles
+          if (iPart >= nlocal) continue;
+          if (!(mask[iPart] & groupbit) || !(mask[iPart] & fwg->groupbit)) continue;
+
+          double *contact_history = c_history[iPart];
+
+          if (contact_history)
+          {
+            // Do stuff
+          }
+        }
+      }
+      */
+    }
+  }
+
 }
 
 /* ---------------------------------------------------------------------- */
@@ -304,6 +382,14 @@ void FixCollisionTracker::print_atom_pair_info(int i, int j)
  // printf("Atom i[%d]: x[%f,%f,%f]; Atom j[%d]: x[%f,%f,%f]\n", i,x[i][0],x[i][1],x[i][2],j,x[j][0],x[j][1],x[j][2]);
  // printf("Atom i[%d]: v[%f,%f,%f]; Atom j[%d]: v[%f,%f,%f]\n", i,v[i][0],v[i][1],v[i][2],j,v[j][0],v[j][1],v[j][2]);
 
+}
+
+void FixCollisionTracker::print_atom_info(int i)
+{
+  double **x = atom->x;
+  double **v = atom->v;
+  //double **f = atom->f;
+  printf("Atom i[%d]: x[%f,%f,%f]; v[%f,%f,%f]\n", i,x[i][0],x[i][1],x[i][2],v[i][0],v[i][1],v[i][2]);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -433,3 +519,25 @@ void FixCollisionTracker::compute_local_contact(SurfacesIntersectData& sidata, d
   MathExtraLiggghtsNonspherical::rotate_global2local(atom->quaternion[jPart], jLocal, jResult);
 }
 
+/* ---------------------------------------------------------------------- */
+
+double* FixCollisionTracker::get_triangle_contact_history(TriMesh *mesh, FixContactHistoryMesh *fix_contact, int iPart, int iTri)
+{
+  // get contact history of particle iPart and triangle idTri
+  // NOTE: depends on naming in fix_wall_gran!
+
+  std::string fix_nneighs_name("n_neighs_mesh_");
+  fix_nneighs_name += mesh->mesh_id();
+  FixPropertyAtom* fix_nneighs = static_cast<FixPropertyAtom*>(modify->find_fix_property(fix_nneighs_name.c_str(),"property/atom","scalar",0,0,this->style));
+
+  int idTri = mesh->id(iTri);
+  const int nneighs = fix_nneighs->get_vector_atom_int(iPart);
+  for (int j = 0; j < nneighs; ++j)
+  {
+    if (fix_contact->partner(iPart, j) == idTri)
+    {
+      return fix_contact->contacthistory(iPart, j);
+    }
+  }
+  return NULL;
+}
