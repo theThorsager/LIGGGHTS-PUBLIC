@@ -39,6 +39,7 @@
     Copyright 2009-2012 JKU Linz
 ------------------------------------------------------------------------- */
 
+#include <vector>
 #ifdef FIX_CLASS
 
 FixStyle(collision/tracker,FixCollisionTracker)
@@ -64,17 +65,16 @@ class FixCollisionTracker : public Fix {
   ~FixCollisionTracker();
   int setmask();
   void init();
-//  void pre_force();
+//  void pre_force(int);
   void post_force(int);
   void end_of_step();
   double compute_scalar();
 
   void print_contact_status(SurfacesIntersectData &); 
   void print_atom_pair_info(int i, int j);
-  bool checkSurfaceIntersect(SurfacesIntersectData & sidata);
   void compute_local_contact(SurfacesIntersectData& sidata, double *iResult, double *jResult);
 
-
+  void openfile();
   void compute_normal(SurfacesIntersectData &);
   double compute_relative_velocity(SurfacesIntersectData &);
  private:
@@ -91,12 +91,14 @@ class FixCollisionTracker : public Fix {
   std::vector<double> rel_vels;
   std::vector<double> lcol;
 
+//  std::vector<double*> prev_intersections;
   double InternalValue;
   int time_step_counter;
   Superquadric particle_i;
   Superquadric particle_j;
 
-  
+
+  char* filename;  
   int me;
   FILE *fp;
   /*
