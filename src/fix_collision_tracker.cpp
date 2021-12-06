@@ -78,6 +78,8 @@
 #include "fix_insert.h"
 #include "fix_insert_stream.h"
 #include "fix_insert_stream_predefined.h"
+#include "fix_wall_gran.h"
+#include "fix_contact_history_mesh.h"
 
 #include "math_extra_liggghts_nonspherical.h"
 
@@ -96,9 +98,8 @@ FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
   // int iarg = 6;
 
   pair_gran = static_cast<PairGran*>(force->pair_match("gran", 1));
-  particles_were_in_contact_offset = pair_gran->get_history_offset("particles_were_in_contact", "0");
-  contact_point_offset = pair_gran->get_history_offset("cpx", "0");
-  pre_particles_were_in_contact_offset = 1; // = pair_gran->add_history_value("pre_particles_were_in_contact", "0");
+  //pre_particles_were_in_contact_offset = pair_gran->add_history_value("pre_particles_were_in_contact", "0");
+  pre_particles_were_in_contact_offset = -1; // = pair_gran->add_history_value("pre_particles_were_in_contact", "0");
 
   
   ncollisions = 0;
@@ -123,8 +124,12 @@ int FixCollisionTracker::setmask()
 
 void FixCollisionTracker::init()
 {
-  // Don't know why this did not work in the constructor
+
+  particles_were_in_contact_offset = pair_gran->get_history_offset("particles_were_in_contact", "0");
+  contact_point_offset = pair_gran->get_history_offset("cpx", "0");
   pre_particles_were_in_contact_offset = pair_gran->add_history_value("pre_particles_were_in_contact", "0");
+  printf("offsets: %d,%d,%d,\n", particles_were_in_contact_offset,pre_particles_were_in_contact_offset,contact_point_offset);
+  
 }
 
 /* ---------------------------------------------------------------------- */
@@ -134,11 +139,13 @@ void FixCollisionTracker::init()
 
 void FixCollisionTracker::post_force(int inumber)
 {
-  //time_step_counter++;
-  //printf("timestep %d\n", time_step_counter);
-  
-  // pair_gran_base.h in compute_force()
+  // Get local atom information
+  int nlocal = atom->nlocal;
+  int *mask = atom->mask;
+  int *tag = atom->tag;
 
+  // pair_gran_base.h in compute_force()
+  // Get granular pair information and neighboor information
   PairGran *pg = pair_gran;
   double ** first_contact_hist = pg->listgranhistory ? pg->listgranhistory->firstdouble : NULL;
   int ** firstneigh = pg->list->firstneigh;
@@ -147,10 +154,10 @@ void FixCollisionTracker::post_force(int inumber)
   int * ilist = pg->list->ilist;
   const int dnum = pg->dnum();
   int * numneigh = pg->list->numneigh;
-  double **v = atom->v;
-  double **f = atom->f;
   
   SurfacesIntersectData sidata;
+
+  // particle - particle
   for (int ii = 0; ii < inum; ii++) {
     const int i = ilist[ii];
     sidata.i = i;
@@ -175,27 +182,83 @@ void FixCollisionTracker::post_force(int inumber)
     }
   }
 
-/*
-  double **velocity = atom->v;
-  int n = atom->nlocal;
+  // particle - wall (mesh is included)
+  int n_wall_fixes = modify->n_fixes_style("wall/gran");
+  //printf("n_wall_fixes: %d\n", n_wall_fixes);
 
-  double speed[n];
-
-  InternalValue = 0;
-  fprintf(screen , "Current velocities are: ");
-  for (int i = 0; i < n; ++i)
+  for (int ifix = 0; ifix < n_wall_fixes; ++ifix)
   {
-    speed[i] = sqrt(velocity[i][0]*velocity[i][0] + 
-                    velocity[i][1]*velocity[i][1] + 
-                    velocity[i][2]*velocity[i][2]); 
-   
-    InternalValue += speed[i]; 
-    fprintf(screen , "%f, ", speed[i]);
-  } 
-  fprintf(screen, "\n");
+    FixWallGran *fwg = static_cast<FixWallGran*>(modify->find_fix_style("wall/gran",ifix));
 
-  // fprintf(screen , "current iteration value is %f\n", InternalValue);
-*/
+    if (fwg->is_mesh_wall())
+    {
+      int n_FixMesh = fwg->n_meshes();
+
+      for (int iMesh = 0; iMesh < n_FixMesh; iMesh++)
+      {
+        TriMesh *mesh = fwg->mesh_list()[iMesh]->triMesh();
+        int nTriAll = mesh->sizeLocal() + mesh->sizeGhost(); // Need to check how to handle ghost particles
+        FixContactHistoryMesh *fix_contact = fwg->mesh_list()[iMesh]->contactHistory();
+        if (!fix_contact) continue;
+
+        // get neighborList and numNeigh
+        FixNeighlistMesh * meshNeighlist = fwg->mesh_list()[iMesh]->meshNeighlist();
+        if (!meshNeighlist) continue;
+
+        // loop owned trinagles //(and ghost triangles)
+        for (int iTri = 0; iTri < nTriAll; iTri++)
+        {
+          const std::vector<int> & neighborList = meshNeighlist->get_contact_list(iTri);
+          const int numneigh = neighborList.size();
+
+          for (int iCont = 0; iCont < numneigh; iCont++) {
+
+            const int iPart = neighborList[iCont];
+
+            // do not need to handle ghost particles
+            if (iPart >= nlocal) continue;
+            if (!(mask[iPart] & groupbit) || !(mask[iPart] & fwg->groupbit)) continue;
+          
+            double *contact_history = get_triangle_contact_history(mesh, fix_contact, iPart, iTri);
+            if (contact_history)
+            {
+              printf("triangle: %d; particle: %d; \n", iTri, iPart);
+              print_atom_info(iPart);
+            }
+          
+          }
+        }
+      }
+    }
+    else // Is a primitive wall
+    {
+      /*
+      double **c_history = get_primitive_wall_contact_history(fwg);
+      if (c_history)
+      {
+        // loop neighbor list
+        int *neighborList;
+        int nNeigh = fwg->primitiveWall()->getNeighbors(neighborList);
+
+        for (int iCont = 0; iCont < nNeigh ; iCont++, neighborList++)
+        {
+          int iPart = *neighborList;
+          // do not need to handle ghost particles
+          if (iPart >= nlocal) continue;
+          if (!(mask[iPart] & groupbit) || !(mask[iPart] & fwg->groupbit)) continue;
+
+          double *contact_history = c_history[iPart];
+
+          if (contact_history)
+          {
+            // Do stuff
+          }
+        }
+      }
+      */
+    }
+  }
+
 }
 
 /* ---------------------------------------------------------------------- */
@@ -208,6 +271,14 @@ void FixCollisionTracker::print_atom_pair_info(int i, int j)
   printf("Atom i[%d]: x[%f,%f,%f]; Atom j[%d]: x[%f,%f,%f]\n", i,x[i][0],x[i][1],x[i][2],j,x[j][0],x[j][1],x[j][2]);
   printf("Atom i[%d]: v[%f,%f,%f]; Atom j[%d]: v[%f,%f,%f]\n", i,v[i][0],v[i][1],v[i][2],j,v[j][0],v[j][1],v[j][2]);
 
+}
+
+void FixCollisionTracker::print_atom_info(int i)
+{
+  double **x = atom->x;
+  double **v = atom->v;
+  //double **f = atom->f;
+  printf("Atom i[%d]: x[%f,%f,%f]; v[%f,%f,%f]\n", i,x[i][0],x[i][1],x[i][2],v[i][0],v[i][1],v[i][2]);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -229,6 +300,7 @@ void FixCollisionTracker::print_contact_status(SurfacesIntersectData& sidata) //
   */
   bool intersect = *particles_were_in_contact == SURFACES_INTERSECT;
   bool pre_intersect = *pre_particles_were_in_contact == SURFACES_INTERSECT;
+  printf("Particles(%d,%d), contact bool; now: %d(%f); pre: %d(%f)\n", sidata.i, sidata.j, intersect, *particles_were_in_contact, pre_intersect, *pre_particles_were_in_contact);
  
   if (intersect && !pre_intersect)
   {
@@ -236,14 +308,11 @@ void FixCollisionTracker::print_contact_status(SurfacesIntersectData& sidata) //
     compute_normal(sidata);
     double rel_v = compute_relative_velocity(sidata);
     printf("The relative velocity of the particles at the time of impact was: %f \n", rel_v);
+    printf("Particles(%d,%d) intersect %d\n", sidata.i, sidata.j, intersect);
+    printf("Intersection point: %f,%f,%f\n", prev_step_point[0], prev_step_point[1], prev_step_point[2]);  
+    printf("Total number of collisions: %i\n", ncollisions);
   }
   
-//  bool intersect = checkSurfaceIntersect(sidata);
-  printf("Particles(%d,%d) intersect %d\n", sidata.i, sidata.j, intersect);
-  printf("Intersection point: %f,%f,%f\n", prev_step_point[0], prev_step_point[1], prev_step_point[2]);  
-  printf("Total number of collisions: %i\n", ncollisions);  
-
-
   *pre_particles_were_in_contact = *particles_were_in_contact;
 } 
 
@@ -316,77 +385,25 @@ void FixCollisionTracker::compute_local_contact(SurfacesIntersectData& sidata, d
   MathExtraLiggghtsNonspherical::rotate_global2local(atom->quaternion[jPart], jLocal, jResult);
 }
 
+/* ---------------------------------------------------------------------- */
 
-bool FixCollisionTracker::checkSurfaceIntersect(SurfacesIntersectData & sidata)
+double* FixCollisionTracker::get_triangle_contact_history(TriMesh *mesh, FixContactHistoryMesh *fix_contact, int iPart, int iTri)
+{
+  // get contact history of particle iPart and triangle idTri
+  // NOTE: depends on naming in fix_wall_gran!
+
+  std::string fix_nneighs_name("n_neighs_mesh_");
+  fix_nneighs_name += mesh->mesh_id();
+  FixPropertyAtom* fix_nneighs = static_cast<FixPropertyAtom*>(modify->find_fix_property(fix_nneighs_name.c_str(),"property/atom","scalar",0,0,this->style));
+
+  int idTri = mesh->id(iTri);
+  const int nneighs = fix_nneighs->get_vector_atom_int(iPart);
+  for (int j = 0; j < nneighs; ++j)
+  {
+    if (fix_contact->partner(iPart, j) == idTri)
     {
-      sidata.is_non_spherical = true;
-      bool particles_in_contact = false;
-      //double *const prev_step_point = &sidata.contact_history[contact_point_offset]; //contact points
-      //double *const inequality_start = &sidata.contact_history[inequality_start_offset];
-      //double *const particles_were_in_contact = &sidata.contact_history[particles_were_in_contact_offset];
-
-      const int iPart = sidata.i;
-      const int jPart = sidata.j;
-
-      #ifdef LIGGGHTS_DEBUG
-        if(std::isnan(vectorMag3D(atom->x[iPart])))
-          error->one(FLERR,"atom->x[iPart] is NaN!");
-        if(std::isnan(vectorMag4D(atom->quaternion[iPart])))
-          error->one(FLERR,"atom->quaternion[iPart] is NaN!");
-        if(std::isnan(vectorMag3D(atom->x[jPart])))
-          error->one(FLERR,"atom->x[jPart] is NaN!");
-        if(std::isnan(vectorMag4D(atom->quaternion[jPart])))
-          error->one(FLERR,"atom->quaternion[jPart] is NaN!");
-      #endif
-
-      particle_i.set(atom->x[iPart], atom->quaternion[iPart], atom->shape[iPart], atom->blockiness[iPart]);
-      particle_j.set(atom->x[jPart], atom->quaternion[jPart], atom->shape[jPart], atom->blockiness[jPart]);
-
-      /*
-      unsigned int int_inequality_start = MathExtraLiggghtsNonspherical::round_int(*inequality_start);
-      bool obb_intersect = false;
-      if(*particles_were_in_contact == SURFACES_INTERSECT)
-        obb_intersect = true; //particles had overlap on the previous time step, skipping OBB intersection check
-      else
-        obb_intersect = MathExtraLiggghtsNonspherical::obb_intersect(&particle_i, &particle_j, int_inequality_start);
-      */
-      bool obb_intersect = false;
-      obb_intersect = MathExtraLiggghtsNonspherical::obb_intersect(&particle_i, &particle_j);
-      if(obb_intersect) {//OBB intersect particles in possible contact
-
-        double fi, fj;
-        const double ri = cbrt(particle_i.shape[0]*particle_i.shape[1]*particle_i.shape[2]);
-        const double rj = cbrt(particle_j.shape[0]*particle_j.shape[1]*particle_j.shape[2]);
-        double ratio = ri / (ri + rj);
-
-        /*
-        if(*particles_were_in_contact == SURFACES_FAR)
-          MathExtraLiggghtsNonspherical::calc_contact_point_if_no_previous_point_avaialable(sidata, &particle_i, &particle_j, sidata.contact_point, fi, fj, this->error);
-        else
-          MathExtraLiggghtsNonspherical::calc_contact_point_using_prev_step(sidata, &particle_i, &particle_j, ratio, update->dt, prev_step_point, sidata.contact_point, fi, fj, this->error);
-        */
-        MathExtraLiggghtsNonspherical::calc_contact_point_if_no_previous_point_avaialable(sidata, &particle_i, &particle_j, sidata.contact_point, fi, fj, this->error);
-        //LAMMPS_NS::vectorCopy3D(sidata.contact_point, prev_step_point); //store contact point in contact history for the next DEM time step
-
-        #ifdef LIGGGHTS_DEBUG
-          if(std::isnan(vectorMag3D(sidata.contact_point)))
-            error->one(FLERR,"sidata.contact_point is NaN!");
-        #endif
-        
-        particles_in_contact = std::max(fi, fj) < 0.0;
-
-        if(particles_in_contact) {
-          //*particles_were_in_contact = SURFACES_INTERSECT;
-        } 
-        else
-        {
-          //*particles_were_in_contact = SURFACES_CLOSE;
-        }
-       } 
-       else
-       {
-         //*particles_were_in_contact = SURFACES_FAR;
-       }
-      //*inequality_start = static_cast<double>(int_inequality_start);
-      return particles_in_contact;
+      return fix_contact->contacthistory(iPart, j);
     }
+  }
+  return NULL;
+}

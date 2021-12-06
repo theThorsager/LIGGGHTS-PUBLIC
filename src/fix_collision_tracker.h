@@ -52,6 +52,8 @@ FixStyle(collision/tracker,FixCollisionTracker)
 #include "contact_interface.h"
 #include "superquadric.h"
 #include "pair_gran.h"
+#include "tri_mesh.h"
+#include "fix_contact_history_mesh.h"
 
 using namespace LIGGGHTS;
 using namespace ContactModels;
@@ -69,9 +71,9 @@ class FixCollisionTracker : public Fix {
 
   void print_contact_status(SurfacesIntersectData &); 
   void print_atom_pair_info(int i, int j);
-  bool checkSurfaceIntersect(SurfacesIntersectData & sidata);
+  void print_atom_info(int i);
   void compute_local_contact(SurfacesIntersectData& sidata, double *iResult, double *jResult);
-
+  double* get_triangle_contact_history(TriMesh *mesh, FixContactHistoryMesh *fix_contact, int iPart, int iTri);
 
   void compute_normal(SurfacesIntersectData &);
   double compute_relative_velocity(SurfacesIntersectData &);
