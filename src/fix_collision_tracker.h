@@ -61,10 +61,12 @@ namespace LAMMPS_NS {
 class FixCollisionTracker : public Fix {
  public:
   FixCollisionTracker(class LAMMPS *, int, char **);
+  ~FixCollisionTracker();
   int setmask();
   void init();
 //  void pre_force();
   void post_force(int);
+  void end_of_step();
   double compute_scalar();
 
   void print_contact_status(SurfacesIntersectData &); 
@@ -83,12 +85,18 @@ class FixCollisionTracker : public Fix {
 
   int ncollisions;
 
+ // int vector_local_size;
+  std::vector<double> rel_vels;
+  std::vector<double> lcol;
 
   double InternalValue;
   int time_step_counter;
   Superquadric particle_i;
   Superquadric particle_j;
 
+  
+  int me;
+  FILE *fp;
   /*
   class Properties* properties;
   class PairGran* pg;

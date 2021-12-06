@@ -45,6 +45,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <cmath>
+#include <vector>
 #include "atom.h"
 #include "pair.h"
 #include "update.h"
@@ -85,6 +86,8 @@ using namespace LAMMPS_NS;
 using namespace FixConst;
 using namespace LIGGGHTS::ContactModels;
 
+#define DELTA 1000
+
 /* ---------------------------------------------------------------------- */
 
 FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
@@ -102,19 +105,57 @@ FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
   
   ncollisions = 0;
 
+  size_local_rows = 0;
+  size_local_cols = 0;
 
+//  memory->create(vector_local, DELTA, "fix/collision/tracker");
+//  vector_local_size = DELTA;
+
+  local_freq = 1;
+  local_flag = 1;
   nevery = atoi(arg[3]);
 
   // We will add options later
   time_step_counter = 0;
+
+  MPI_Comm_rank(world,&me); 
+
+  fp = NULL;
+  //char *title = NULL;
+
+  int iarg = 5;
+  while (iarg < narg) {
+    if (strcmp(arg[iarg],"file") == 0 || strcmp(arg[iarg],"append") == 0) {
+      if (iarg+2 > narg) error->all(FLERR,"Illegal fix print command");
+      if (me == 0) {
+        if (strcmp(arg[iarg],"file") == 0) fp = fopen(arg[iarg+1],"w");
+        else fp = fopen(arg[iarg+1],"a");
+        if (fp == NULL) {
+          char str[512];
+          sprintf(str,"Cannot open fix print file %s",arg[iarg+1]);
+          error->one(FLERR,str);
+        }
+      }
+      iarg += 2;
+    } else
+    {
+        error->all(FLERR,"Illegal fix print command");
+    }
+  }
+
 }
 
+FixCollisionTracker::~FixCollisionTracker()
+{
+  memory->destroy(vector_local);
+}
 /* ---------------------------------------------------------------------- */
 
 int FixCollisionTracker::setmask()
 {
   int mask = 0;
   mask |= POST_FORCE;
+  mask |= END_OF_STEP;
   return mask;
 }
 
@@ -128,6 +169,36 @@ void FixCollisionTracker::init()
 
 /* ---------------------------------------------------------------------- */
 
+void FixCollisionTracker::end_of_step()
+{
+
+  // print to file
+  // make a copy of string to work on
+  // substitute for $ variables (no printing)
+  // append a newline and print final copy
+  // variable evaluation may invoke computes so wrap with clear/add
+
+//  modify->clearstep_compute();
+
+//  strcpy(copy,string);
+//  input->substitute(copy,work,maxcopy,maxwork,0);
+
+//  modify->addstep_compute(update->ntimestep + nevery);
+
+  if (me == 0 && fp) {
+
+    std::vector<double>::iterator rel_it = rel_vels.begin();
+    std::vector<double>::iterator lcol_it = lcol.begin();
+
+    while (rel_it < rel_vels.end())
+      fprintf(fp,"%f, %f, %f, %f\n", rel_it++, lcol_it++, lcol_it++, lcol_it++);
+   
+    fflush(fp);
+    rel_vels.clear();
+    lcol.clear();
+  }
+
+}
 
 /* ---------------------------------------------------------------------- */
 
@@ -234,6 +305,16 @@ void FixCollisionTracker::print_contact_status(SurfacesIntersectData& sidata) //
     ++ncollisions;
     compute_normal(sidata);
     double rel_v = compute_relative_velocity(sidata);
+
+    rel_vels.push_back(rel_v);
+    /*
+    vector_local[size_local_rows++] = rel_v;
+    if (size_local_rows == vector_local_size) 
+    {
+      vector_local_size += DELTA;
+      memory->grow(vector_local, vector_local_size, "fix/collision/tracker");
+    }
+    */
     printf("The relative velocity of the particles at the time of impact was: %f \n", rel_v);
   }
   
