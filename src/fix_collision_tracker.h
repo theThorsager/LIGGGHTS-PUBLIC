@@ -105,6 +105,7 @@ class FixCollisionTracker : public Fix {
   char* filename;  
   int me;
   FILE *fp;
+  int writetofile = 0;
   /*
   class Properties* properties;
   class PairGran* pg;

@@ -117,6 +117,7 @@ FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
   local_freq = 1;
   local_flag = 1;
   nevery = atoi(arg[3]);
+  global_freq = 1; // ?
 
   // We will add options later
   time_step_counter = 0;
@@ -133,6 +134,7 @@ FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
         int n = strlen(arg[iarg+1]) + 1;
         filename = new char[n];
         strcpy(filename,arg[iarg+1]);
+        writetofile = 1;
       }
       iarg += 2;
     } else
@@ -145,7 +147,7 @@ FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
 
 FixCollisionTracker::~FixCollisionTracker()
 {
-  memory->destroy(vector_local);
+//  memory->destroy(vector_local);
 }
 /* ---------------------------------------------------------------------- */
 
@@ -170,7 +172,7 @@ void FixCollisionTracker::init()
 
 void FixCollisionTracker::end_of_step()
 {
-  if (1){ //me == 0) {
+  if (writetofile){ //me == 0) {
     openfile();
     if (fp)
     {
@@ -181,11 +183,11 @@ void FixCollisionTracker::end_of_step()
         fprintf(fp,"%f %f %f %f\n", *rel_it++, *lcol_it++, *lcol_it++, *lcol_it++);
    
       fflush(fp);
-      rel_vels.clear();
-      lcol.clear();
       fclose(fp);
     }
   }
+  rel_vels.clear();
+  lcol.clear();
 }
 
 /* ---------------------------------------------------------------------- */
@@ -370,6 +372,8 @@ void FixCollisionTracker::post_force(int vflag)
     }
   }
 
+  vector_local = rel_vels.data();
+  size_local_rows = rel_vels.size();
 }
 
 /* ---------------------------------------------------------------------- */
