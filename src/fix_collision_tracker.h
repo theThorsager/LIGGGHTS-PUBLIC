@@ -80,7 +80,7 @@ class FixCollisionTracker : public Fix {
 
   void openfile();
   void compute_normal(SurfacesIntersectData &);
-  double compute_relative_velocity(SurfacesIntersectData &);
+  void compute_relative_velocity(SurfacesIntersectData &);
  private:
 
   enum {SURFACES_FAR, SURFACES_CLOSE, SURFACES_INTERSECT};
@@ -94,6 +94,7 @@ class FixCollisionTracker : public Fix {
  // int vector_local_size;
   std::vector<double> rel_vels;
   std::vector<double> lcol;
+  int array_offset = 0;
 
 //  std::vector<double*> prev_intersections;
   double InternalValue;

@@ -109,16 +109,19 @@ FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
   ncollisions = 0;
 
   size_local_rows = 0;
-  size_local_cols = 0;
+  size_local_cols = 2;
 
-//  memory->create(vector_local, DELTA, "fix/collision/tracker");
+  int memsize = 2 * sizeof(double*);
+  array_local = (double**)memory->smalloc(memsize, "fix/collision/tracker");
+//  memory->create(array_local, memsize, "fix/collision/tracker");
 //  vector_local_size = DELTA;
 
   local_freq = 1;
   local_flag = 1;
   nevery = atoi(arg[3]);
   global_freq = 1; // ?
-
+  array_offset = 0;
+  
   // We will add options later
   time_step_counter = 0;
 
@@ -147,7 +150,7 @@ FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
 
 FixCollisionTracker::~FixCollisionTracker()
 {
-//  memory->destroy(vector_local);
+  memory->sfree(array_local);
 }
 /* ---------------------------------------------------------------------- */
 
@@ -176,18 +179,18 @@ void FixCollisionTracker::end_of_step()
     openfile();
     if (fp)
     {
-      std::vector<double>::iterator rel_it = rel_vels.begin();
-      std::vector<double>::iterator lcol_it = lcol.begin();
+      double * rel = rel_vels.data();
+      double * col = lcol.data();
+      int n = rel_vels.size() / 2;
 
-      while (rel_it < rel_vels.end())
-        fprintf(fp,"%f %f %f %f\n", *rel_it++, *lcol_it++, *lcol_it++, *lcol_it++);
+      for (int i = 0; i < n; ++i)
+        fprintf(fp,"%f %f %f %f %f\n", rel[2*i], rel[2*i+1], col[3*i], col[3*i+1], col[3*i+2]);
    
       fflush(fp);
       fclose(fp);
     }
   }
-  rel_vels.clear();
-  lcol.clear();
+//  printf("removing data at: %i\n", update->ntimestep);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -253,6 +256,12 @@ void FixCollisionTracker::pre_force(int vflag)
 
 void FixCollisionTracker::post_force(int vflag)
 {
+  if ((update->ntimestep - 1) % nevery == 0)
+  {
+    array_offset = 0;
+    rel_vels.clear();
+    lcol.clear();
+  }
   // Get local atom information
   int nlocal = atom->nlocal;
   int *mask = atom->mask;
@@ -335,8 +344,8 @@ void FixCollisionTracker::post_force(int vflag)
             double *contact_history = get_triangle_contact_history(mesh, fix_contact, iPart, iTri);
             if (contact_history)
             {
-              printf("triangle: %d; particle: %d; \n", iTri, iPart);
-              print_atom_info(iPart);
+            //  printf("triangle: %d; particle: %d; \n", iTri, iPart);
+            //  print_atom_info(iPart);
             }
           
           }
@@ -372,8 +381,10 @@ void FixCollisionTracker::post_force(int vflag)
     }
   }
 
-  vector_local = rel_vels.data();
-  size_local_rows = rel_vels.size();
+  // This is as weird as it looks, but LIGGGHTS want their array this way
+  array_local[0] = rel_vels.data() + array_offset;
+  size_local_rows = (rel_vels.size() - array_offset) / 2;
+  array_offset += size_local_rows * 2;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -421,10 +432,10 @@ void FixCollisionTracker::print_contact_status(SurfacesIntersectData& sidata)//,
   {
     ++ncollisions;
     compute_normal(sidata);
-    double rel_v = compute_relative_velocity(sidata);
+    compute_relative_velocity(sidata);
 
-    rel_vels.push_back(rel_v);
-    rel_vels.push_back(rel_v);
+//    rel_vels.push_back(rel_v);
+//    rel_vels.push_back(rel_v);
 
     double point_of_contact[6];
     compute_local_contact(sidata, point_of_contact, point_of_contact+3);
@@ -458,7 +469,7 @@ double FixCollisionTracker::compute_scalar()
 
 /* ---------------------------------------------------------------------- */
 
-double FixCollisionTracker::compute_relative_velocity(SurfacesIntersectData& sidata)
+void FixCollisionTracker::compute_relative_velocity(SurfacesIntersectData& sidata)
 {
   double *const prev_step_point = &sidata.contact_history[contact_point_offset];
   int iPart = sidata.i;
@@ -481,7 +492,15 @@ double FixCollisionTracker::compute_relative_velocity(SurfacesIntersectData& sid
   double rel_v[3];
   vectorSubtract3D(a_i, a_j, rel_v);
   double res = vectorDot3D(rel_v, sidata.en);
-  return res > 0 ? res : -res;
+  double rel_vel = res > 0 ? res : -res;
+
+  double tan_res = sqrt(vectorDot3D(rel_v, rel_v) - res * res);
+
+  rel_vels.push_back(rel_vel);
+  rel_vels.push_back(tan_res);
+  rel_vels.push_back(rel_vel);
+  rel_vels.push_back(tan_res);
+
 }
 
 /* ---------------------------------------------------------------------- */

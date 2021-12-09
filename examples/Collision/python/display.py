@@ -17,6 +17,7 @@ mypath = sys.argv[1]
 onlyfiles = [f for f in listdir(mypath) if isfile(join(mypath, f))]
 
 vel = []
+tvel = []
 posX = []
 posY = []
 posZ = []
@@ -27,11 +28,13 @@ for file in onlyfiles:
         for row in spamreader:
             #print(', '.join(row))
             vel.append(row[0])
-            posX.append(row[1])
-            posY.append(row[2])
-            posZ.append(row[3])
+            tvel.append(row[1])
+            posX.append(row[2])
+            posY.append(row[3])
+            posZ.append(row[4])
 
 vel = np.array(vel, dtype=float)
+tvel = np.array(tvel, dtype=float)
 posX = np.array(posX, dtype=float)
 posY = np.array(posY, dtype=float)
 posZ = np.array(posZ, dtype=float)
@@ -41,11 +44,19 @@ fig = plt.figure()
 plt.hist(vel, density=False, bins=30)  # density=False would make counts
 plt.ylabel('# of collisions')
 plt.yscale('log')
-plt.xlabel('velocity')
+plt.xlabel('normal velocity')
+
+plt.show(block=True)
+# Histogram
+fig = plt.figure()
+plt.hist(tvel, density=False, bins=30)  # density=False would make counts
+plt.ylabel('# of collisions')
+plt.yscale('log')
+plt.xlabel('tangential velocity')
 
 plt.show(block=True)
 
-
+print("Number of Collisions: " + str(len(vel)))
 # Copy to Symmetries
 # Mirror X
 posX = np.concatenate((posX, [-i for i in posX]));
@@ -80,4 +91,5 @@ plt.ylim(-size, size)
 #plt.zlim(-size, size)
 
 plt.show(block=True)
+
 
