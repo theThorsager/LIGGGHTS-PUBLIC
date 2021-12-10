@@ -160,10 +160,10 @@ FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
       x_nsplit = atoi(arg[iarg+1]);
       if (x_nsplit < 1) error->all(FLERR,"x axis split < 1");
 
-      y_nsplit = atoi(arg[iarg+1]);
+      y_nsplit = atoi(arg[iarg+2]);
       if (y_nsplit < 1) error->all(FLERR,"y axis split < 1");
       
-      z_nsplit = atoi(arg[iarg+1]);
+      z_nsplit = atoi(arg[iarg+3]);
       if (z_nsplit < 1) error->all(FLERR,"z axis split < 1");
 
       memory->create(x_octsurface, y_nsplit, z_nsplit, "xprojection");
@@ -171,9 +171,10 @@ FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
       memory->create(z_octsurface, x_nsplit, y_nsplit, "zprojection");
 
       // Zero out newly allocated array
-      memset(x_octsurface, 0, sizeof(x_octsurface)*y_nsplit*z_nsplit);
-      memset(y_octsurface, 0, sizeof(y_octsurface)*x_nsplit*z_nsplit);
-      memset(z_octsurface, 0, sizeof(z_octsurface)*x_nsplit*y_nsplit);
+      // Using a trick based on how memory->creates allocates memory
+      memset(x_octsurface[0], 0, sizeof(**x_octsurface)*y_nsplit*z_nsplit);
+      memset(y_octsurface[0], 0, sizeof(**y_octsurface)*x_nsplit*z_nsplit);
+      memset(z_octsurface[0], 0, sizeof(**z_octsurface)*x_nsplit*y_nsplit);
 
       iarg += 4;
     }
@@ -215,13 +216,20 @@ void FixCollisionTracker::end_of_step()
     openfile();
     if (fp)
     {
-      double * rel = rel_vels.data();
-      double * col = lcol.data();
-      int n = rel_vels.size() / 2;
+      if(cube_projection)
+      {
+        fprintf(fp,"%d, %d, %d\n", x_nsplit, y_nsplit, z_nsplit);
+        print_cube_projection(fp);
+      }
+      else
+      {
+        double * rel = rel_vels.data();
+        double * col = lcol.data();
+        int n = rel_vels.size() / 2;
 
-      for (int i = 0; i < n; ++i)
-        fprintf(fp,"%f %f %f %f %f\n", rel[2*i], rel[2*i+1], col[3*i], col[3*i+1], col[3*i+2]);
-   
+        for (int i = 0; i < n; ++i)
+          fprintf(fp,"%f %f %f %f %f\n", rel[2*i], rel[2*i+1], col[3*i], col[3*i+1], col[3*i+2]);
+      }
       fflush(fp);
       fclose(fp);
     }
@@ -257,6 +265,43 @@ void FixCollisionTracker::openfile()
   // delete string with timestep replaced
 
   delete [] filecurrent;
+}
+
+void FixCollisionTracker::print_cube_projection(FILE *fp)
+{
+
+  // Print x side
+  for(int y = 0; y < y_nsplit; y++)
+  {
+    fprintf(fp,"%d", x_octsurface[y][0]);
+    for(int z = 1; z < z_nsplit; z++)
+    {
+      fprintf(fp,",%d", x_octsurface[y][z]);
+    }
+    fprintf(fp,"\n");
+  }
+
+  // Print y side
+  for(int x = 0; x < x_nsplit; x++)
+  {
+    fprintf(fp,"%d", y_octsurface[x][0]);
+    for(int z = 1; z < z_nsplit; z++)
+    {
+      fprintf(fp,",%d", y_octsurface[x][z]);
+    }
+    fprintf(fp,"\n");
+  }
+
+  // Print z side
+  for(int x = 0; x < x_nsplit; x++)
+  {
+    fprintf(fp,"%d", z_octsurface[x][0]);
+    for(int y = 1; y < y_nsplit; y++)
+    {
+      fprintf(fp,",%d", z_octsurface[x][y]);
+    }
+    fprintf(fp,"\n");
+  }
 }
 
 /* ---------------------------------------------------------------------- */
@@ -625,27 +670,27 @@ void FixCollisionTracker::unit_cube_oct_projection(int iPart, double *contact, d
 
 /* ---------------------------------------------------------------------- */
 
-void FixCollisionTracker::unit_cube_oct_indexing(double *cube_projection)
+void FixCollisionTracker::unit_cube_oct_indexing(double *cube_proj)
 {
-  if(cube_projection[0] >= 1) // Project to x side
+  if(cube_proj[0] >= 1) // Project to x side
   {
     //calculating indexes
-    int y = std::max(y_nsplit-1, (int)floor(y_nsplit*cube_projection[1]));
-    int z = std::max(z_nsplit-1, (int)floor(z_nsplit*cube_projection[2]));
+    int y = std::min(y_nsplit-1, (int)floor(y_nsplit*cube_proj[1]));
+    int z = std::min(z_nsplit-1, (int)floor(z_nsplit*cube_proj[2]));
     x_octsurface[y][z]++; //(y,z)
   }
-  else if(cube_projection[1] >= 1) // Project to y side
+  else if(cube_proj[1] >= 1) // Project to y side
   {
     //calculating indexes
-    int x = std::max(x_nsplit-1, (int)floor(x_nsplit*cube_projection[0]));
-    int z = std::max(z_nsplit-1, (int)floor(z_nsplit*cube_projection[2]));
+    int x = std::min(x_nsplit-1, (int)floor(x_nsplit*cube_proj[0]));
+    int z = std::min(z_nsplit-1, (int)floor(z_nsplit*cube_proj[2]));
     y_octsurface[x][z]++; //(x,z)
   }
   else // Project to z side
   {
     //calculating indexes
-    int x = std::max(x_nsplit-1, (int)floor(x_nsplit*cube_projection[0]));
-    int y = std::max(y_nsplit-1, (int)floor(y_nsplit*cube_projection[1]));
+    int x = std::min(x_nsplit-1, (int)floor(x_nsplit*cube_proj[0]));
+    int y = std::min(y_nsplit-1, (int)floor(y_nsplit*cube_proj[1]));
     z_octsurface[x][y]++; //(x,y)
   }
 }

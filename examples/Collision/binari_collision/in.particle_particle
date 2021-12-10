@@ -71,7 +71,7 @@ communicate	single vel yes
 soft_particles yes
 
 # Processors lay out
-processors 1 1 1
+# processors 1 1 1
 
 # Declare domain
 region		reg block -0.15 0.15 -0.15 0.15 0.0 0.2 units box
@@ -131,7 +131,7 @@ run           1
 unfix         ctg
 
 # Our own fix
-fix colltracker all collision/tracker 1
+fix my all collision/tracker 3000 file results*.csv cpoctant 7 8 9
 
 # Save simulation to be restarted
 restart       ${saveOutEvery} poly.restart poly.restart

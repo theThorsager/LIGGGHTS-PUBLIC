@@ -72,14 +72,6 @@ class FixCollisionTracker : public Fix {
   void end_of_step();
   double compute_scalar();
 
-  void print_contact_status(SurfacesIntersectData &); 
-  void print_atom_pair_info(int i, int j);
-  void print_atom_info(int i);
-  void compute_local_contact(SurfacesIntersectData& sidata, double *iResult, double *jResult);
-  void unit_cube_oct_projection(int iPart, double *contact, double *result);
-  void unit_cube_oct_indexing(double *cube_projection);
-  double* get_triangle_contact_history(TriMesh *mesh, FixContactHistoryMesh *fix_contact, int iPart, int iTri);
-
   void openfile();
   void compute_normal(SurfacesIntersectData &);
   void compute_relative_velocity(SurfacesIntersectData &);
@@ -116,6 +108,19 @@ class FixCollisionTracker : public Fix {
   int me;
   FILE *fp;
   int writetofile = 0;
+
+  void print_contact_status(SurfacesIntersectData &); 
+  
+  void print_atom_pair_info(int i, int j);
+  void print_atom_info(int i);
+
+  void compute_local_contact(SurfacesIntersectData& sidata, double *iResult, double *jResult);
+
+  double* get_triangle_contact_history(TriMesh *mesh, FixContactHistoryMesh *fix_contact, int iPart, int iTri);
+
+  void unit_cube_oct_projection(int iPart, double *contact, double *result);
+  void unit_cube_oct_indexing(double *cube_projection);
+  void print_cube_projection(FILE *fp);
   /*
   class Properties* properties;
   class PairGran* pg;
