@@ -101,6 +101,11 @@ fix          cad1 all mesh/surface file meshes/wall.stl type 1 curvature 1e-5
 
 # Use the imported mesh as granular wall
 fix          mixer all wall/gran model ${c_model} mesh n_meshes 1 meshes cad1
+
+
+# Our own fix
+# fix ID(number or name to identify fix) group-id style
+# fix colltracker all collision/tracker 1
 						
 # Particle insertion
 create_atoms 1 single 0.0 0.0 0.05
@@ -128,6 +133,9 @@ thermo_modify lost ignore norm no
 fix           ctg all check/timestep/gran 1 0.01 0.01
 run           1
 unfix         ctg
+
+# Our own fix
+fix colltracker all collision/tracker 1000 file data/particle_wall*.txt
 
 # Save simulation to be restarted
 restart       ${saveOutEvery} poly.restart poly.restart

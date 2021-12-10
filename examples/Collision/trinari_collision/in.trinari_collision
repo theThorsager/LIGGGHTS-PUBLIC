@@ -130,6 +130,10 @@ fix           ctg all check/timestep/gran 1 0.01 0.01
 run           1
 unfix         ctg
 
+# Our own fix
+# fix ID(number or name to identify fix) group-id style
+fix colltracker all collision/tracker 1
+
 # Save simulation to be restarted
 restart       ${saveOutEvery} poly.restart poly.restart
 

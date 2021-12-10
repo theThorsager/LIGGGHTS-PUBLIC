@@ -116,6 +116,15 @@ FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
 //  memory->create(array_local, memsize, "fix/collision/tracker");
 //  vector_local_size = DELTA;
 
+  // Cube projection parameters and 2d arrays to 0;
+  cube_projection = 0;
+  x_nsplit = 0;
+  y_nsplit = 0;
+  z_nsplit = 0;
+  x_octsurface = NULL;
+  y_octsurface = NULL;
+  z_octsurface = NULL;
+
   local_freq = 1;
   local_flag = 1;
   nevery = atoi(arg[3]);
@@ -140,9 +149,33 @@ FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
         writetofile = 1;
       }
       iarg += 2;
-    } else
+    }
+    else if(strcmp(arg[iarg],"cpoctant") == 0)
     {
-        error->all(FLERR,"Illegal fix print command");
+      if (iarg+4 > narg) error->all(FLERR,"Illegal fix cpoctant command");
+
+      cube_projection = 1;
+
+      // x,y,z sides
+      x_nsplit = atoi(arg[iarg+1]);
+      if (x_nsplit < 1) error->all(FLERR,"x axis split < 1");
+
+      y_nsplit = atoi(arg[iarg+1]);
+      if (y_nsplit < 1) error->all(FLERR,"y axis split < 1");
+      
+      z_nsplit = atoi(arg[iarg+1]);
+      if (z_nsplit < 1) error->all(FLERR,"z axis split < 1");
+
+      memory->create(x_octsurface, y_nsplit, z_nsplit, "xprojection");
+      memory->create(y_octsurface, x_nsplit, z_nsplit, "yprojection");
+      memory->create(z_octsurface, x_nsplit, y_nsplit, "zprojection");
+
+      // Zero out newly allocated array
+      memset(x_octsurface, 0, sizeof(x_octsurface)*y_nsplit*z_nsplit);
+      memset(y_octsurface, 0, sizeof(y_octsurface)*x_nsplit*z_nsplit);
+      memset(z_octsurface, 0, sizeof(z_octsurface)*x_nsplit*y_nsplit);
+
+      iarg += 4;
     }
   }
 
@@ -151,6 +184,9 @@ FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
 FixCollisionTracker::~FixCollisionTracker()
 {
   memory->sfree(array_local);
+  memory->destroy(x_octsurface);
+  memory->destroy(y_octsurface);
+  memory->destroy(z_octsurface);
 }
 /* ---------------------------------------------------------------------- */
 
@@ -301,11 +337,12 @@ void FixCollisionTracker::post_force(int vflag)
       //        compute impact angle and add to bin
       //
       print_contact_status(sidata);//, iter++);  
-      print_atom_pair_info(i,j);
+      //print_atom_pair_info(i,j);
     }
   }
 
   // particle - wall (mesh is included)
+  /*
   int n_wall_fixes = modify->n_fixes_style("wall/gran");
 
   for (int ifix = 0; ifix < n_wall_fixes; ++ifix)
@@ -354,7 +391,7 @@ void FixCollisionTracker::post_force(int vflag)
     }
     else // Is a primitive wall
     {
-      /*
+      / *
       double **c_history = get_primitive_wall_contact_history(fwg);
       if (c_history)
       {
@@ -377,9 +414,10 @@ void FixCollisionTracker::post_force(int vflag)
           }
         }
       }
-      */
+      * /
     }
   }
+  */
 
   // This is as weird as it looks, but LIGGGHTS want their array this way
   array_local[0] = rel_vels.data() + array_offset;
@@ -393,11 +431,12 @@ void FixCollisionTracker::print_atom_pair_info(int i, int j)
 {
   double **x = atom->x;
   double **v = atom->v;
-  //double **f = atom->f;
- // printf("Atom i[%d]: x[%f,%f,%f]; Atom j[%d]: x[%f,%f,%f]\n", i,x[i][0],x[i][1],x[i][2],j,x[j][0],x[j][1],x[j][2]);
- // printf("Atom i[%d]: v[%f,%f,%f]; Atom j[%d]: v[%f,%f,%f]\n", i,v[i][0],v[i][1],v[i][2],j,v[j][0],v[j][1],v[j][2]);
-
+  double **f = atom->f;
+  printf("Atom i[%d]: x[%f,%f,%f]; Atom j[%d]: x[%f,%f,%f]\n", i,x[i][0],x[i][1],x[i][2],j,x[j][0],x[j][1],x[j][2]);
+  printf("Atom i[%d]: v[%f,%f,%f]; Atom j[%d]: v[%f,%f,%f]\n", i,v[i][0],v[i][1],v[i][2],j,v[j][0],v[j][1],v[j][2]);
 }
+
+/* ---------------------------------------------------------------------- */
 
 void FixCollisionTracker::print_atom_info(int i)
 {
@@ -414,9 +453,9 @@ void FixCollisionTracker::print_contact_status(SurfacesIntersectData& sidata)//,
   double *const particles_were_in_contact = &sidata.contact_history[particles_were_in_contact_offset];
   double *const pre_particles_were_in_contact = &sidata.contact_history[pre_particles_were_in_contact_offset];
   double *const prev_step_point = &sidata.contact_history[contact_point_offset];
-//  fprintf(screen, "The offset is: %i\n", particles_were_in_contact_offset);
-//  fprintf(screen , "if statment %i\n", *particles_were_in_contact == SURFACES_INTERSECT);
-  
+  //fprintf(screen, "The offset is: %i\n", particles_were_in_contact_offset);
+  //fprintf(screen , "if statment %i\n", *particles_were_in_contact == SURFACES_INTERSECT);
+
   /*
   if (*particles_were_in_contact == SURFACES_INTERSECT) {
     fprintf(screen , "Particles %i and %i are in contact\n", sidata.i, sidata.j);
@@ -427,20 +466,33 @@ void FixCollisionTracker::print_contact_status(SurfacesIntersectData& sidata)//,
   bool pre_intersect = *pre_particles_were_in_contact == SURFACES_INTERSECT;
   bool intersect = *particles_were_in_contact == SURFACES_INTERSECT;
 
-//  printf("Particles were intersecting: %i, are: %i\n", pre_intersect, intersect); 
+  //printf("Particles were intersecting: %i, are: %i\n", pre_intersect, intersect); 
   if (intersect && !pre_intersect)
   {
     ++ncollisions;
     compute_normal(sidata);
     compute_relative_velocity(sidata);
 
-//    rel_vels.push_back(rel_v);
-//    rel_vels.push_back(rel_v);
+    //rel_vels.push_back(rel_v);
+    //rel_vels.push_back(rel_v);
 
     double point_of_contact[6];
     compute_local_contact(sidata, point_of_contact, point_of_contact+3);
+
     for (int i = 0; i < 6; ++i)
+    {
       lcol.push_back(point_of_contact[i]);
+    }
+
+    // Projecting contact point to octant of unit cube
+    if(cube_projection)
+    {
+      double result[3];
+      unit_cube_oct_projection(sidata.i, point_of_contact, result);
+      unit_cube_oct_indexing(result);
+      unit_cube_oct_projection(sidata.j, point_of_contact+3, result);
+      unit_cube_oct_indexing(result);
+    }
     /*
     vector_local[size_local_rows++] = rel_v;
     if (size_local_rows == vector_local_size) 
@@ -449,13 +501,13 @@ void FixCollisionTracker::print_contact_status(SurfacesIntersectData& sidata)//,
       memory->grow(vector_local, vector_local_size, "fix/collision/tracker");
     }
     */
-   // printf("The relative velocity of the particles at the time of impact was: %f \n", rel_v);
+    // printf("The relative velocity of the particles at the time of impact was: %f \n", rel_v);
   }
   
-//  bool intersect = checkSurfaceIntersect(sidata);
-//  printf("Particles(%d,%d) intersect %d\n", sidata.i, sidata.j, intersect);
-//  printf("Intersection point: %f,%f,%f\n", prev_step_point[0], prev_step_point[1], prev_step_point[2]);  
-//  printf("Total number of collisions: %i\n", ncollisions); 
+  //  bool intersect = checkSurfaceIntersect(sidata);
+  //  printf("Particles(%d,%d) intersect %d\n", sidata.i, sidata.j, intersect);
+  //  printf("Intersection point: %f,%f,%f\n", prev_step_point[0], prev_step_point[1], prev_step_point[2]);  
+  //  printf("Total number of collisions: %i\n", ncollisions); 
 
   *pre_particles_were_in_contact = *particles_were_in_contact; 
 } 
@@ -540,6 +592,51 @@ void FixCollisionTracker::compute_local_contact(SurfacesIntersectData& sidata, d
 
   MathExtraLiggghtsNonspherical::rotate_global2local(atom->quaternion[iPart], iLocal, iResult);
   MathExtraLiggghtsNonspherical::rotate_global2local(atom->quaternion[jPart], jLocal, jResult);
+}
+
+/* ---------------------------------------------------------------------- */
+
+void FixCollisionTracker::unit_cube_oct_projection(int iPart, double *contact, double *result)
+{
+  double* shape = atom->shape[iPart];
+
+  vectorCopy3D(contact, result);
+  vectorAbs3D(result);
+
+  // Normalise superquadric particle shape
+  result[0] /= shape[0];
+  result[1] /= shape[1];
+  result[2] /= shape[2];
+  
+  double maxVal = vectorMax3D(result);
+  vectorScalarDiv3D(result, maxVal);
+}
+
+/* ---------------------------------------------------------------------- */
+
+void FixCollisionTracker::unit_cube_oct_indexing(double *cube_projection)
+{
+  if(cube_projection[0] >= 1) // Project to x side
+  {
+    //calculating indexes
+    int y = std::max(y_nsplit-1, (int)floor(y_nsplit*cube_projection[1]));
+    int z = std::max(z_nsplit-1, (int)floor(z_nsplit*cube_projection[2]));
+    x_octsurface[y][z]++; //(y,z)
+  }
+  else if(cube_projection[1] >= 1) // Project to y side
+  {
+    //calculating indexes
+    int x = std::max(x_nsplit-1, (int)floor(x_nsplit*cube_projection[0]));
+    int z = std::max(z_nsplit-1, (int)floor(z_nsplit*cube_projection[2]));
+    y_octsurface[x][z]++; //(x,z)
+  }
+  else // Project to z side
+  {
+    //calculating indexes
+    int x = std::max(x_nsplit-1, (int)floor(x_nsplit*cube_projection[0]));
+    int y = std::max(y_nsplit-1, (int)floor(y_nsplit*cube_projection[1]));
+    z_octsurface[x][y]++; //(x,y)
+  }
 }
 
 /* ---------------------------------------------------------------------- */

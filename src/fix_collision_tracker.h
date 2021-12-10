@@ -76,6 +76,8 @@ class FixCollisionTracker : public Fix {
   void print_atom_pair_info(int i, int j);
   void print_atom_info(int i);
   void compute_local_contact(SurfacesIntersectData& sidata, double *iResult, double *jResult);
+  void unit_cube_oct_projection(int iPart, double *contact, double *result);
+  void unit_cube_oct_indexing(double *cube_projection);
   double* get_triangle_contact_history(TriMesh *mesh, FixContactHistoryMesh *fix_contact, int iPart, int iTri);
 
   void openfile();
@@ -102,6 +104,13 @@ class FixCollisionTracker : public Fix {
   Superquadric particle_i;
   Superquadric particle_j;
 
+  bool cube_projection;
+  int x_nsplit;
+  int y_nsplit;
+  int z_nsplit;
+  int** x_octsurface;
+  int** y_octsurface;
+  int** z_octsurface;
 
   char* filename;  
   int me;

@@ -56,7 +56,7 @@ variable dt         equal ${f_ray}*${Rayleigh_t} # Time step based on fraction %
 # Calculations based on steps
 variable nStepsRun      equal (${time_run}-${time_run}%${dt})/${dt}
 variable additionTime   equal (1.0-1.0%${dt})/${dt}
-variable writeOutEvery  equal (${time_sample}-${time_sample}%${dt})/${dt}
+variable writeOutEvery  equal 1 #(${time_sample}-${time_sample}%${dt})/${dt}
 variable writeOutEvery1 equal (${time_sample1}-${time_sample1}%${dt})/${dt}
 variable saveOutEvery   equal (${time_save}-${time_save}%${dt})/${dt}
 variable thermofreq     equal (${time_thermo}-${time_thermo}%${dt})/${dt}
@@ -131,6 +131,10 @@ thermo_modify lost ignore norm no
 fix           ctg all check/timestep/gran 1 0.01 0.01
 run           1
 unfix         ctg
+
+# Our own fix
+# fix ID(number or name to identify fix) group-id style
+fix colltracker all collision/tracker 1
 
 # Save simulation to be restarted
 restart       ${saveOutEvery} poly.restart poly.restart
