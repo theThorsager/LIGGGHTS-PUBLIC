@@ -136,6 +136,8 @@ fix           ctg all check/timestep/gran 1 0.01 0.01
 run           1
 unfix         ctg
 
+fix my all collision/tracker 3000 file results*.csv
+
 # Save simulation to be restarted
 restart       ${saveOutEvery} poly.restart poly.restart
 
