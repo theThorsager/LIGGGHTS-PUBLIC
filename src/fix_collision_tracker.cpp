@@ -440,7 +440,7 @@ void FixCollisionTracker::print_contact_status(SurfacesIntersectData& sidata)//,
     double point_of_contact[6];
     compute_local_contact(sidata, point_of_contact, point_of_contact+3);
     int nind = 6;
-    if (sidata.j < atom->nlocal)
+    if (sidata.j >= atom->nlocal)
       nind = 3;
 
     for (int i = 0; i < nind; ++i)
