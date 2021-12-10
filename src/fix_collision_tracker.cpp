@@ -439,7 +439,11 @@ void FixCollisionTracker::print_contact_status(SurfacesIntersectData& sidata)//,
 
     double point_of_contact[6];
     compute_local_contact(sidata, point_of_contact, point_of_contact+3);
-    for (int i = 0; i < 6; ++i)
+    int nind = 6;
+    if (sidata.j < atom->nlocal)
+      nind = 3;
+
+    for (int i = 0; i < nind; ++i)
       lcol.push_back(point_of_contact[i]);
     /*
     vector_local[size_local_rows++] = rel_v;
@@ -498,8 +502,11 @@ void FixCollisionTracker::compute_relative_velocity(SurfacesIntersectData& sidat
 
   rel_vels.push_back(rel_vel);
   rel_vels.push_back(tan_res);
-  rel_vels.push_back(rel_vel);
-  rel_vels.push_back(tan_res);
+
+  if (jPart < atom->nlocal) {
+    rel_vels.push_back(rel_vel);
+    rel_vels.push_back(tan_res);
+  }
 
 }
 
