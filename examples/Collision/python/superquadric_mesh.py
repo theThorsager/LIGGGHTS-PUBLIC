@@ -84,7 +84,15 @@ def plot_superquadric_mayavi(superquadric,n=16):
     #return fig
 
 
-def plot_grid_mayavi(superquadric, spherecube):
+def prep_scalar_value(side):
+    # Each square consists of 2 triangles
+    scalar = np.transpose(side)
+    scalar = np.array(scalar).flatten()
+    scalar = np.append(scalar,scalar)
+
+    return scalar
+
+def plot_grid_mayavi(superquadric, spherecube, xSide, ySide, zSide):
 
     a = superquadric.a
     b = superquadric.b
@@ -96,9 +104,9 @@ def plot_grid_mayavi(superquadric, spherecube):
     n2 = superquadric.n2
 
     unit = 1
-    xN = 4#spherecube.xN #+ 1 # For fence post problem
-    yN = 4#spherecube.yN #+ 1 # For fence post problem
-    zN = 4#spherecube.zN #+ 1 # For fence post problem
+    xN = spherecube.xN + 1 # For fence post problem
+    yN = spherecube.yN + 1 # For fence post problem
+    zN = spherecube.zN + 1 # For fence post problem
 
     fig = mlab.figure(fgcolor=(0, 0, 0), bgcolor=(1, 1, 1))
 
@@ -116,36 +124,26 @@ def plot_grid_mayavi(superquadric, spherecube):
     y = u
     z = v
     x,y,z = get_projected_coord(x,y,z,a,b,c,n1,n2)
-    w = np.arctan(x/y)
-    #w = [[(i+j) for j in range(9) ] for i in range(2)]
-    w = [0.9*i for i in range(10)] 
-    w = np.linspace(-1, 1, 10)
-    #w = np.mod(w,2)
-    #w[0][0] = 0
-    #w[0][1] = 0
-    #w[1][0] = 0
-    #w[1][1] = 0
-    print(w)
-    print(np.shape(w))
+    w = prep_scalar_value(xSide)
     #superquad_surf = mlab.mesh(x, y, z, representation='wireframe', colormap='Oranges')
-    superquad_surf = mlab.mesh(x, y, z, colormap='Oranges')
-
-    cell_data = superquad_surf.mlab_source.dataset.cell_data
-    cell_data.scalars = w
-    cell_data.scalars.name = 'Cell data'
-    cell_data.update()
+    superquad_surf = mlab.mesh(x, y, z, colormap='Blues')
+    superquad_surf.mlab_source.dataset.cell_data.scalars = w
+    superquad_surf.mlab_source.dataset.cell_data.scalars.name = 'X Cell data'
+    superquad_surf.mlab_source.dataset.cell_data.update()
     superquad_surf.actor.mapper.scalar_mode = 'use_cell_data'
-    print(cell_data)
-
-    mesh2 = mlab.pipeline.set_active_attribute(superquad_surf, cell_scalars='Cell data')
-    #mlab.pipeline.surface(mesh2)
-
+    mesh2 = mlab.pipeline.set_active_attribute(superquad_surf,cell_scalars='X Cell data') 
+    surf = mlab.pipeline.surface(mesh2,colormap='Blues')
 
     # Negative x side
     x = -x
-    superquad_surf = mlab.mesh(x, y, z, representation='wireframe', colormap='Blues')
-    #superquad_surf = mlab.mesh(x, y, z, colormap='Blues')
-
+    #superquad_surf = mlab.mesh(x, y, z, representation='wireframe', colormap='Blues')
+    superquad_surf = mlab.mesh(x, y, z, colormap='Blues')
+    superquad_surf.mlab_source.dataset.cell_data.scalars = w
+    superquad_surf.mlab_source.dataset.cell_data.scalars.name = '-X Cell data'
+    superquad_surf.mlab_source.dataset.cell_data.update()
+    superquad_surf.actor.mapper.scalar_mode = 'use_cell_data'
+    mesh2 = mlab.pipeline.set_active_attribute(superquad_surf,cell_scalars='-X Cell data') 
+    surf = mlab.pipeline.surface(mesh2,colormap='Blues')
 
     # Create meshgrid for side X,-X
     u = np.linspace(-unit, unit, xN)
@@ -157,13 +155,26 @@ def plot_grid_mayavi(superquadric, spherecube):
     y = np.ones(np.shape(u))
     z = v
     x,y,z = get_projected_coord(x,y,z,a,b,c,n1,n2)
-    superquad_surf = mlab.mesh(x, y, z, representation='wireframe', colormap='Oranges')
-    #superquad_surf = mlab.mesh(x, y, z, colormap='Oranges')
+    w = prep_scalar_value(ySide)
+    #superquad_surf = mlab.mesh(x, y, z, representation='wireframe', colormap='Oranges')
+    superquad_surf = mlab.mesh(x, y, z, colormap='Blues')
+    superquad_surf.mlab_source.dataset.cell_data.scalars = w
+    superquad_surf.mlab_source.dataset.cell_data.scalars.name = 'Y Cell data'
+    superquad_surf.mlab_source.dataset.cell_data.update()
+    superquad_surf.actor.mapper.scalar_mode = 'use_cell_data'
+    mesh2 = mlab.pipeline.set_active_attribute(superquad_surf,cell_scalars='Y Cell data') 
+    surf = mlab.pipeline.surface(mesh2,colormap='Blues')
 
     # Negative y side
     y = -y
-    superquad_surf = mlab.mesh(x, y, z, representation='wireframe', colormap='Blues')
-    #superquad_surf = mlab.mesh(x, y, z, colormap='Oranges')
+    #superquad_surf = mlab.mesh(x, y, z, representation='wireframe', colormap='Blues')
+    superquad_surf = mlab.mesh(x, y, z, colormap='Blues')
+    superquad_surf.mlab_source.dataset.cell_data.scalars = w
+    superquad_surf.mlab_source.dataset.cell_data.scalars.name = '-Y Cell data'
+    superquad_surf.mlab_source.dataset.cell_data.update()
+    superquad_surf.actor.mapper.scalar_mode = 'use_cell_data'
+    mesh2 = mlab.pipeline.set_active_attribute(superquad_surf,cell_scalars='-Y Cell data') 
+    surf = mlab.pipeline.surface(mesh2,colormap='Blues')
 
 
     # Create meshgrid for side X,-X
@@ -176,13 +187,29 @@ def plot_grid_mayavi(superquadric, spherecube):
     y = v
     z = np.ones(np.shape(u))
     x,y,z = get_projected_coord(x,y,z,a,b,c,n1,n2)
-    superquad_surf = mlab.mesh(x, y, z, representation='wireframe', colormap='Oranges')
-    #superquad_surf = mlab.mesh(x, y, z)
+    w = prep_scalar_value(zSide)
+    #superquad_surf = mlab.mesh(x, y, z, representation='wireframe', colormap='Oranges')
+    superquad_surf = mlab.mesh(x, y, z, colormap='Blues')
+    superquad_surf.mlab_source.dataset.cell_data.scalars = w
+    superquad_surf.mlab_source.dataset.cell_data.scalars.name = 'Z Cell data'
+    superquad_surf.mlab_source.dataset.cell_data.update()
+    superquad_surf.actor.mapper.scalar_mode = 'use_cell_data'
+    mesh2 = mlab.pipeline.set_active_attribute(superquad_surf,cell_scalars='Z Cell data') 
+    surf = mlab.pipeline.surface(mesh2,colormap='Blues')
 
     # Negative z side
     z = -z
-    superquad_surf = mlab.mesh(x, y, z, representation='wireframe', colormap='Blues')
-    #superquad_surf = mlab.mesh(x, y, z)
+    #superquad_surf = mlab.mesh(x, y, z, representation='wireframe', colormap='Blues')
+    superquad_surf = mlab.mesh(x, y, z, colormap='Blues')
+    superquad_surf.mlab_source.dataset.cell_data.scalars = w
+    superquad_surf.mlab_source.dataset.cell_data.scalars.name = '-Z Cell data'
+    superquad_surf.mlab_source.dataset.cell_data.update()
+    superquad_surf.actor.mapper.scalar_mode = 'use_cell_data'
+    mesh2 = mlab.pipeline.set_active_attribute(superquad_surf,cell_scalars='-Z Cell data') 
+    surf = mlab.pipeline.surface(mesh2,colormap='Blues')
+
+    #mlab.colorbar(title='Phase', orientation='vertical', nb_labels=3)
+    #mlab.colorbar()
 
     #mlab.view(.0, -5.0, 4)
     mlab.show()
@@ -205,10 +232,6 @@ def plot_superquadric_matplotlib(fig=None,ax=None,show=True,n=16):
     a = 1#0.005
     b = 1#0.005
     c = 1#0.00225
-
-    #a = a/2
-    #b = b/2
-    #c = c/2
 
     e1 = 0.5 # theta roundness
     e2 = 0.16667 # phi roundness
@@ -323,21 +346,21 @@ def get_octant(path):
         ySide = []
         zSide = []
         
+        # Since values are octant symmetric, divide them by 8
         for i in range(yN):
-            l = [int(s) for s in next(linereader)]
+            l = [float(s)/8 for s in next(linereader)]
             xSide.append(l)
         for i in range(xN):
-            l = [int(s) for s in next(linereader)]
+            l = [float(s)/8 for s in next(linereader)]
             ySide.append(l)
         for i in range(xN):
-            l = [int(s) for s in next(linereader)]
+            l = [float(s)/8 for s in next(linereader)]
             zSide.append(l)
-
 
         # Expand dimension from octant to full cube
         sc = Spherecube(2*xN,2*yN,2*zN)
-        # Expand sides from octant to full  
 
+        # Expand sides from octant to full  
         xSide = [*xSide[::-1], *xSide]
         xSide = [[*i[::-1],*i] for i in xSide]
 
@@ -372,7 +395,7 @@ if __name__ == "__main__":
     superquad = Superquadric(a=a,b=b,c=c,e1=e1,e2=e2,n1=n1,n2=n2)
 
     #plot_superquadric_mayavi(superquad,n=8)
-    plot_grid_mayavi(superquad,sc)
+    plot_grid_mayavi(superquad, sc, xSide, ySide, zSide)
 
 
 '''
