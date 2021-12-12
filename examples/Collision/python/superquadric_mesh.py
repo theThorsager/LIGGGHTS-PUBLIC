@@ -4,9 +4,26 @@ from matplotlib import cm
 import math as m
 import argparse
 import pathlib
+from mayavi import mlab
 import sys
 import os
 import csv
+from typing import NamedTuple
+
+
+class Superquadric(NamedTuple):
+    a: float
+    b: float
+    c: float
+    e1: float
+    e2: float
+    n1: float
+    n2: float
+
+class Spherecube(NamedTuple):
+    xN: float
+    yN: float
+    zN: float
 
 
 def get_args():
@@ -27,7 +44,130 @@ def fexp(x, p):
     return np.sign(x)*(abs(x)**p)
 
 
-def plot_superquadric(fig=None,ax=None,show=True,n=16):
+def plot_superquadric_mayavi(superquadric,n=16):
+
+    # Account for start and end being the same in a circle
+    n_samples = n + 1
+
+    eta = np.linspace(-np.pi/2, np.pi/2, n_samples, endpoint=True)
+    omega = np.linspace(-np.pi, np.pi, n_samples, endpoint=True)
+    eta, omega = np.meshgrid(eta, omega)
+
+    a = superquadric.a
+    b = superquadric.b
+    c = superquadric.c
+
+    e1 = superquadric.e1
+    e2 = superquadric.e2
+    n1 = superquadric.n1
+    n2 = superquadric.n2
+
+    x = a * fexp(np.cos(eta), e1) * fexp(np.cos(omega), e2)
+    y = b * fexp(np.cos(eta), e1) * fexp(np.sin(omega), e2)
+    z = c * fexp(np.sin(eta), e1)
+
+
+    fig = mlab.figure(fgcolor=(0, 0, 0), bgcolor=(1, 1, 1))
+
+    ax_scale = [1.0, 1.0, 1.0] # Need to change later
+    ax_ranges = [-2, 2, -2, 2, -2, 2]
+    ax_extent = ax_ranges * np.repeat(ax_scale, 2)
+
+    superquad_surf = mlab.mesh(x, y, z, colormap='Blues')
+    #superquad_surf.actor.actor.scale = ax_scale
+    #mlab.outline(superquad_surf, color=(.7, .7, .7), extent=ax_extent)
+    #mlab.axes(superquad_surf, color=(.7, .7, .7), extent=ax_extent, ranges=ax_ranges, xlabel='x', ylabel='y', zlabel='z')
+
+    mlab.view(.0, -5.0, 4)
+    mlab.show()
+
+    #return fig
+
+
+def plot_grid_mayavi(superquadric, spherecube):
+
+    a = superquadric.a
+    b = superquadric.b
+    c = superquadric.c
+
+    e1 = superquadric.e1
+    e2 = superquadric.e2
+    n1 = superquadric.n1
+    n2 = superquadric.n2
+
+    unit = 1
+    xN = spherecube.xN + 1 # For fence post problem
+    yN = spherecube.yN + 1 # For fence post problem
+    zN = spherecube.zN + 1 # For fence post problem
+
+    fig = mlab.figure(fgcolor=(0, 0, 0), bgcolor=(1, 1, 1))
+
+    ax_scale = [1.0, 1.0, 1.0] # Need to change later
+    ax_ranges = [-2, 2, -2, 2, -2, 2]
+    ax_extent = ax_ranges * np.repeat(ax_scale, 2)
+
+
+    # Create meshgrid for side X,-X
+    u = np.linspace(-unit, unit, yN)
+    v = np.linspace(-unit, unit, zN)
+    u,v = np.meshgrid(u,v)
+
+    # Positive x side
+    x = np.ones(np.shape(u))
+    y = u
+    z = v
+    x,y,z = get_projected_coord(x,y,z,a,b,c,n1,n2)
+    superquad_surf = mlab.mesh(x, y, z, representation='wireframe', colormap='Oranges')
+    #superquad_surf = mlab.mesh(x, y, z, colormap='Blues')
+
+    # Negative x side
+    x = -x
+    superquad_surf = mlab.mesh(x, y, z, representation='wireframe', colormap='Blues')
+    #superquad_surf = mlab.mesh(x, y, z, colormap='Blues')
+
+
+    # Create meshgrid for side X,-X
+    u = np.linspace(-unit, unit, xN)
+    v = np.linspace(-unit, unit, zN)
+    u,v = np.meshgrid(u,v)
+
+    # Positive y side
+    x = u
+    y = np.ones(np.shape(u))
+    z = v
+    x,y,z = get_projected_coord(x,y,z,a,b,c,n1,n2)
+    superquad_surf = mlab.mesh(x, y, z, representation='wireframe', colormap='Oranges')
+    #superquad_surf = mlab.mesh(x, y, z, colormap='Oranges')
+
+    # Negative y side
+    y = -y
+    superquad_surf = mlab.mesh(x, y, z, representation='wireframe', colormap='Blues')
+    #superquad_surf = mlab.mesh(x, y, z, colormap='Oranges')
+
+
+    # Create meshgrid for side X,-X
+    u = np.linspace(-unit, unit, xN)
+    v = np.linspace(-unit, unit, yN)
+    u,v = np.meshgrid(u,v)
+
+    # Positive z side
+    x = u
+    y = v
+    z = np.ones(np.shape(u))
+    x,y,z = get_projected_coord(x,y,z,a,b,c,n1,n2)
+    superquad_surf = mlab.mesh(x, y, z, representation='wireframe', colormap='Oranges')
+    #superquad_surf = mlab.mesh(x, y, z)
+
+    # Negative z side
+    z = -z
+    superquad_surf = mlab.mesh(x, y, z, representation='wireframe', colormap='Blues')
+    #superquad_surf = mlab.mesh(x, y, z)
+
+    #mlab.view(.0, -5.0, 4)
+    mlab.show()
+
+
+def plot_superquadric_matplotlib(fig=None,ax=None,show=True,n=16):
 
     if not fig:
         fig = plt.figure()
@@ -63,8 +203,6 @@ def plot_superquadric(fig=None,ax=None,show=True,n=16):
     if show:
         plt.show()
 
-    print(f(x,y,z,a,b,c,n1,n2))
-
     return fig,ax
 
 
@@ -72,7 +210,7 @@ def g(x):
     return np.tan(np.pi/4*x)
 
 
-def plot_grid(fig=None,ax=None,show=True):
+def plot_grid_matplotlib(fig=None,ax=None,show=True):
 
     if not fig:
         fig = plt.figure()
@@ -175,45 +313,47 @@ def get_octant(path):
             zSide.append(l)
 
 
+        # Expand dimension from octant to full cube
+        sc = Spherecube(2*xN,2*yN,2*zN)
+        # Expand sides from octant to full  
+
+        xSide = [*xSide[::-1], *xSide]
+        xSide = [[*i[::-1],*i] for i in xSide]
+
+        ySide = [*ySide[::-1], *ySide]
+        ySide = [[*i[::-1],*i] for i in ySide]
+
+        zSide = [*zSide[::-1], *zSide]
+        zSide = [[*i[::-1],*i] for i in zSide]
+
+        return sc, xSide, ySide, zSide
+
+
 if __name__ == "__main__":
 
     args = get_args()
-    get_octant(args.file)
+    sc, xSide, ySide, zSide = get_octant(args.file)
 
-    fig,ax = plot_superquadric(show=False,n=8)
-    plot_grid(fig,ax)
+    exit(1)
 
     a = 1#0.005
     b = 1#0.005
     c = 1#0.00225
 
-    a = a/2
-    b = b/2
-    c = c/2
+    #scale = 0.5
+    #a = scale*a
+    #b = scale*b
+    #c = scale*c
 
-    thetaroundness = 2
-    phiroundness = 6
-    n1 = 2/thetaroundness
-    n2 = 2/phiroundness
+    e1 = 0.5 # theta roundness
+    e2 = 0.16667 # phi roundness
+    n1 = 2/e1 # Blockiness parameter
+    n2 = 2/e2 # Blockiness 
 
-    x,y,z = get_projected_coord(1,1,1,a,b,c,n1,n2)
-    val = f(x,y,z,a,b,c,n1,n2)
+    superquad = Superquadric(a=a,b=b,c=c,e1=e1,e2=e2,n1=n1,n2=n2)
 
-    print(x,y,z)
-    print(val)
-
-    x,y,z = get_projected_coord(0,0,0.5,a,b,c,n1,n2)
-    val = f(x,y,z,a,b,c,n1,n2)
-
-    print(x,y,z)
-    print(val)
-
-    x,y,z = get_projected_coord(0.01,0.01,0.01,a,b,c,n1,n2)
-    val = f(x,y,z,a,b,c,n1,n2)
-
-    print(x,y,z)
-    print(val)
-
+    #plot_superquadric_mayavi(superquad,n=8)
+    plot_grid_mayavi(superquad,sc)
 
 
 '''
