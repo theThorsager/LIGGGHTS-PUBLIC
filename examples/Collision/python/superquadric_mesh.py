@@ -96,16 +96,15 @@ def plot_grid_mayavi(superquadric, spherecube):
     n2 = superquadric.n2
 
     unit = 1
-    xN = spherecube.xN + 1 # For fence post problem
-    yN = spherecube.yN + 1 # For fence post problem
-    zN = spherecube.zN + 1 # For fence post problem
+    xN = 4#spherecube.xN #+ 1 # For fence post problem
+    yN = 4#spherecube.yN #+ 1 # For fence post problem
+    zN = 4#spherecube.zN #+ 1 # For fence post problem
 
     fig = mlab.figure(fgcolor=(0, 0, 0), bgcolor=(1, 1, 1))
 
     ax_scale = [1.0, 1.0, 1.0] # Need to change later
     ax_ranges = [-2, 2, -2, 2, -2, 2]
     ax_extent = ax_ranges * np.repeat(ax_scale, 2)
-
 
     # Create meshgrid for side X,-X
     u = np.linspace(-unit, unit, yN)
@@ -117,8 +116,30 @@ def plot_grid_mayavi(superquadric, spherecube):
     y = u
     z = v
     x,y,z = get_projected_coord(x,y,z,a,b,c,n1,n2)
-    superquad_surf = mlab.mesh(x, y, z, representation='wireframe', colormap='Oranges')
-    #superquad_surf = mlab.mesh(x, y, z, colormap='Blues')
+    w = np.arctan(x/y)
+    #w = [[(i+j) for j in range(9) ] for i in range(2)]
+    w = [0.9*i for i in range(10)] 
+    w = np.linspace(-1, 1, 10)
+    #w = np.mod(w,2)
+    #w[0][0] = 0
+    #w[0][1] = 0
+    #w[1][0] = 0
+    #w[1][1] = 0
+    print(w)
+    print(np.shape(w))
+    #superquad_surf = mlab.mesh(x, y, z, representation='wireframe', colormap='Oranges')
+    superquad_surf = mlab.mesh(x, y, z, colormap='Oranges')
+
+    cell_data = superquad_surf.mlab_source.dataset.cell_data
+    cell_data.scalars = w
+    cell_data.scalars.name = 'Cell data'
+    cell_data.update()
+    superquad_surf.actor.mapper.scalar_mode = 'use_cell_data'
+    print(cell_data)
+
+    mesh2 = mlab.pipeline.set_active_attribute(superquad_surf, cell_scalars='Cell data')
+    #mlab.pipeline.surface(mesh2)
+
 
     # Negative x side
     x = -x
@@ -333,8 +354,6 @@ if __name__ == "__main__":
 
     args = get_args()
     sc, xSide, ySide, zSide = get_octant(args.file)
-
-    exit(1)
 
     a = 1#0.005
     b = 1#0.005
