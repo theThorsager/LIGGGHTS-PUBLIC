@@ -227,14 +227,14 @@ def plot_grid_mayavi(superquadric, spherecube, xSide, ySide, zSide):
     mesh2 = plot_cell_data(x_neg, x_w, name='-X Cell data')
     surf = mlab.pipeline.surface(mesh2, vmin=vmin, vmax=vmax)
     
-    mesh2 = plot_cell_data(y_pos, y_w, name='X Cell data')
+    mesh2 = plot_cell_data(y_pos, y_w, name='Y Cell data')
     surf = mlab.pipeline.surface(mesh2, vmin=vmin, vmax=vmax)
-    mesh2 = plot_cell_data(y_neg, y_w, name='-X Cell data')
+    mesh2 = plot_cell_data(y_neg, y_w, name='-Y Cell data')
     surf = mlab.pipeline.surface(mesh2, vmin=vmin, vmax=vmax)
     
-    mesh2 = plot_cell_data(z_pos, z_w, name='X Cell data')
+    mesh2 = plot_cell_data(z_pos, z_w, name='Z Cell data')
     surf = mlab.pipeline.surface(mesh2, vmin=vmin, vmax=vmax)
-    mesh2 = plot_cell_data(z_neg, z_w, name='-X Cell data')
+    mesh2 = plot_cell_data(z_neg, z_w, name='-Z Cell data')
     surf = mlab.pipeline.surface(mesh2, vmin=vmin, vmax=vmax)
 
     #mlab.colorbar(title='Phase', orientation='vertical', nb_labels=3)
