@@ -66,15 +66,11 @@ class FixCollisionTracker : public Fix {
   FixCollisionTracker(class LAMMPS *, int, char **);
   ~FixCollisionTracker();
   int setmask();
-  void init();
-//  void pre_force(int);
   void post_force(int);
   void end_of_step();
-  double compute_scalar();
 
-  void openfile();
   void compute_normal(SurfacesIntersectData &);
-  void compute_relative_velocity(SurfacesIntersectData &);
+  void compute_relative_velocity(SurfacesIntersectData &, double*, double*);
  private:
 
   enum {SURFACES_FAR, SURFACES_CLOSE, SURFACES_INTERSECT};
@@ -83,18 +79,9 @@ class FixCollisionTracker : public Fix {
   int contact_point_offset;
   class PairGran *pair_gran;
 
-  int ncollisions;
-
- // int vector_local_size;
   std::vector<double> rel_vels;
   std::vector<double> lcol;
   int array_offset = 0;
-
-//  std::vector<double*> prev_intersections;
-  double InternalValue;
-  int time_step_counter;
-  Superquadric particle_i;
-  Superquadric particle_j;
 
   bool cube_projection;
   int x_nsplit;
@@ -109,8 +96,9 @@ class FixCollisionTracker : public Fix {
   FILE *fp;
   int writetofile = 0;
 
-  void print_contact_status(SurfacesIntersectData &); 
-  
+  void openfile();
+  void resolve_contact_status(SurfacesIntersectData &); 
+  bool check_collision(SurfacesIntersectData&);
   void print_atom_pair_info(int i, int j);
   void print_atom_info(int i);
 
@@ -121,22 +109,6 @@ class FixCollisionTracker : public Fix {
   void unit_cube_oct_projection(int iPart, double *contact, double *result);
   void unit_cube_oct_indexing(double *cube_projection);
   void print_cube_projection(FILE *fp);
-  /*
-  class Properties* properties;
-  class PairGran* pg;
-  class FixWallGran* fwg;
-  class FixPropertyGlobal* Y;
-  class FixPropertyGlobal* nu;
-  void calc_rayleigh_hertz_estims();
-  double rayleigh_time,hertz_time;
-  double fraction_rayleigh,fraction_hertz,fraction_skin;
-  double fraction_rayleigh_lim,fraction_hertz_lim;
-  double v_rel_max_simulation; //max relative velocity detected in simulation
-  double vmax_user;
-  double r_min;
-  bool warnflag,errorflag;
-  double ** Yeff;
-  */
 };
 
 }

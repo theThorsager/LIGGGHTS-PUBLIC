@@ -89,8 +89,6 @@ using namespace LAMMPS_NS;
 using namespace FixConst;
 using namespace LIGGGHTS::ContactModels;
 
-#define DELTA 1000
-
 /* ---------------------------------------------------------------------- */
 
 FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
@@ -98,24 +96,24 @@ FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
 {
   if (narg < 4) error->all(FLERR,"Illegal fix collision/tracker command, not enough arguments");
 
-  // int iarg = 6;
-
   pair_gran = static_cast<PairGran*>(force->pair_match("gran", 1));
   particles_were_in_contact_offset = pair_gran->get_history_offset("particles_were_in_contact", "0");
   contact_point_offset = pair_gran->get_history_offset("cpx", "0");
   pre_particles_were_in_contact_offset = pair_gran->get_history_offset("pre_particles_were_in_contact", "0"); // = pair_gran->add_history_value("pre_particles_were_in_contact", "0");
 
-  
-  ncollisions = 0;
-
+  // local array setup
   size_local_rows = 0;
   size_local_cols = 2;
 
   int memsize = 2 * sizeof(double*);
   array_local = (double**)memory->smalloc(memsize, "fix/collision/tracker");
-//  memory->create(array_local, memsize, "fix/collision/tracker");
-//  vector_local_size = DELTA;
 
+  local_freq = 1;
+  local_flag = 1;
+  nevery = atoi(arg[3]);
+  global_freq = 1; // ?
+  array_offset = 0;
+  
   // Cube projection parameters and 2d arrays to 0;
   cube_projection = 0;
   x_nsplit = 0;
@@ -124,18 +122,8 @@ FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
   x_octsurface = NULL;
   y_octsurface = NULL;
   z_octsurface = NULL;
-
-  local_freq = 1;
-  local_flag = 1;
-  nevery = atoi(arg[3]);
-  global_freq = 1; // ?
-  array_offset = 0;
   
-  // We will add options later
-  time_step_counter = 0;
-
   MPI_Comm_rank(world,&me); 
-
   fp = NULL;
 
   int iarg = 4;
@@ -182,6 +170,8 @@ FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
 
 }
 
+/* ---------------------------------------------------------------------- */
+
 FixCollisionTracker::~FixCollisionTracker()
 {
   memory->sfree(array_local);
@@ -189,12 +179,12 @@ FixCollisionTracker::~FixCollisionTracker()
   memory->destroy(y_octsurface);
   memory->destroy(z_octsurface);
 }
+
 /* ---------------------------------------------------------------------- */
 
 int FixCollisionTracker::setmask()
 {
   int mask = 0;
-//  mask |= PRE_FORCE;
   mask |= POST_FORCE;
   mask |= END_OF_STEP;
   return mask;
@@ -202,47 +192,41 @@ int FixCollisionTracker::setmask()
 
 /* ---------------------------------------------------------------------- */
 
-void FixCollisionTracker::init()
-{
-  // Don't know why this did not work in the constructor
- // pre_particles_were_in_contact_offset = pair_gran->add_history_value("pre_particles_were_in_contact", "0");
-}
-
-/* ---------------------------------------------------------------------- */
-
 void FixCollisionTracker::end_of_step()
 {
-  if (writetofile){ //me == 0) {
-    openfile();
-    if (fp)
-    {
-      if(cube_projection)
-      {
-        fprintf(fp,"%d, %d, %d\n", x_nsplit, y_nsplit, z_nsplit);
-        print_cube_projection(fp);
-      }
-      else
-      {
-        double * rel = rel_vels.data();
-        double * col = lcol.data();
-        int n = rel_vels.size() / 2;
-
-        for (int i = 0; i < n; ++i)
-          fprintf(fp,"%f %f %f %f %f\n", rel[2*i], rel[2*i+1], col[3*i], col[3*i+1], col[3*i+2]);
-      }
-      fflush(fp);
-      fclose(fp);
-    }
+  if (!writetofile)
+    return;
+  
+  openfile();
+  if (!fp)
+  {
+    // log error?
+    return;
   }
-//  printf("removing data at: %i\n", update->ntimestep);
+
+  if(cube_projection)
+  {
+    fprintf(fp,"%d, %d, %d\n", x_nsplit, y_nsplit, z_nsplit);
+    print_cube_projection(fp);
+  }
+  else
+  {
+    double * rel = rel_vels.data();
+    double * col = lcol.data();
+    int n = rel_vels.size() / 2;
+
+    for (int i = 0; i < n; ++i)
+      fprintf(fp,"%f %f %f %f %f\n", rel[2*i], rel[2*i+1], col[3*i], col[3*i+1], col[3*i+2]);
+  }
+  fflush(fp);
+  fclose(fp);
 }
 
 /* ---------------------------------------------------------------------- */
 
 void FixCollisionTracker::openfile()
 {
-  // if one file per timestep, replace '*' with current timestep
-  
+  // if one file per timestep, replace '*' with current timestep  
   char *filecurrent = filename;
   
   char *filestar = filecurrent;
@@ -262,14 +246,11 @@ void FixCollisionTracker::openfile()
 
   if (fp == NULL) error->one(FLERR,"Cannot open dump file");
 
-  // delete string with timestep replaced
-
   delete [] filecurrent;
 }
 
 void FixCollisionTracker::print_cube_projection(FILE *fp)
 {
-
   // Print x side
   for(int y = 0; y < y_nsplit; y++)
   {
@@ -305,35 +286,6 @@ void FixCollisionTracker::print_cube_projection(FILE *fp)
 }
 
 /* ---------------------------------------------------------------------- */
-/*
-void FixCollisionTracker::pre_force(int vflag)
-{
-  PairGran *pg = pair_gran;
-  double ** first_contact_hist = pg->listgranhistory ? pg->listgranhistory->firstdouble : NULL;
-  int ** firstneigh = pg->list->firstneigh;
-
-  int inum = pg->list->inum;
-  int * ilist = pg->list->ilist;
-  const int dnum = pg->dnum();
-  int * numneigh = pg->list->numneigh;
-  
-  SurfacesIntersectData sidata;
-  for (int ii = 0; ii < inum; ii++) {
-    const int i = ilist[ii];
-  
-    double * const all_contact_hist = first_contact_hist ? first_contact_hist[i] : NULL;
-
-    const int jnum = numneigh[i];
-
-    for (int jj = 0; jj < jnum; jj++) {
-      sidata.contact_history = all_contact_hist ? &all_contact_hist[dnum*jj] : NULL;
-      double *const prething = &sidata.contact_history[particles_were_in_contact_offset];
-      prev_intersections.push_back(prething);
-    } 
-  }
-}
-*/
-/* ---------------------------------------------------------------------- */
 
 void FixCollisionTracker::post_force(int vflag)
 {
@@ -344,12 +296,8 @@ void FixCollisionTracker::post_force(int vflag)
     lcol.clear();
   }
   // Get local atom information
-  int nlocal = atom->nlocal;
   int *mask = atom->mask;
-  int *tag = atom->tag;
 
-  // pair_gran_base.h in compute_force()
-  // Get granular pair information and neighboor information
   PairGran *pg = pair_gran;
   double ** first_contact_hist = pg->listgranhistory ? pg->listgranhistory->firstdouble : NULL;
   int ** firstneigh = pg->list->firstneigh;
@@ -377,92 +325,12 @@ void FixCollisionTracker::post_force(int vflag)
 
       sidata.contact_history = all_contact_hist ? &all_contact_hist[dnum*jj] : NULL;
      
-      // if (collision)
-      //        compute impact velocity and add to bin
-      //        compute impact angle and add to bin
-      //
-      print_contact_status(sidata);//, iter++);  
-      //print_atom_pair_info(i,j);
+      resolve_contact_status(sidata);
     }
   }
 
-  // particle - wall (mesh is included)
-  /*
-  int n_wall_fixes = modify->n_fixes_style("wall/gran");
-
-  for (int ifix = 0; ifix < n_wall_fixes; ++ifix)
-  {
-    FixWallGran *fwg = static_cast<FixWallGran*>(modify->find_fix_style("wall/gran",ifix));
-
-    if (fwg->is_mesh_wall())
-    {
-      int n_FixMesh = fwg->n_meshes();
-
-      for (int iMesh = 0; iMesh < n_FixMesh; iMesh++)
-      {
-        TriMesh *mesh = fwg->mesh_list()[iMesh]->triMesh();
-        int nTriAll = mesh->sizeLocal() + mesh->sizeGhost(); // Need to check how to handle ghost particles
-        FixContactHistoryMesh *fix_contact = fwg->mesh_list()[iMesh]->contactHistory();
-        if (!fix_contact) continue;
-
-        // get neighborList and numNeigh
-        FixNeighlistMesh * meshNeighlist = fwg->mesh_list()[iMesh]->meshNeighlist();
-        if (!meshNeighlist) continue;
-
-        // loop owned trinagles //(and ghost triangles)
-        for (int iTri = 0; iTri < nTriAll; iTri++)
-        {
-          const std::vector<int> & neighborList = meshNeighlist->get_contact_list(iTri);
-          const int numneigh = neighborList.size();
-
-          for (int iCont = 0; iCont < numneigh; iCont++) {
-
-            const int iPart = neighborList[iCont];
-
-            // do not need to handle ghost particles
-            if (iPart >= nlocal) continue;
-            if (!(mask[iPart] & groupbit) || !(mask[iPart] & fwg->groupbit)) continue;
-          
-            double *contact_history = get_triangle_contact_history(mesh, fix_contact, iPart, iTri);
-            if (contact_history)
-            {
-            //  printf("triangle: %d; particle: %d; \n", iTri, iPart);
-            //  print_atom_info(iPart);
-            }
-          
-          }
-        }
-      }
-    }
-    else // Is a primitive wall
-    {
-      / *
-      double **c_history = get_primitive_wall_contact_history(fwg);
-      if (c_history)
-      {
-        // loop neighbor list
-        int *neighborList;
-        int nNeigh = fwg->primitiveWall()->getNeighbors(neighborList);
-
-        for (int iCont = 0; iCont < nNeigh ; iCont++, neighborList++)
-        {
-          int iPart = *neighborList;
-          // do not need to handle ghost particles
-          if (iPart >= nlocal) continue;
-          if (!(mask[iPart] & groupbit) || !(mask[iPart] & fwg->groupbit)) continue;
-
-          double *contact_history = c_history[iPart];
-
-          if (contact_history)
-          {
-            // Do stuff
-          }
-        }
-      }
-      * /
-    }
-  }
-  */
+  // particle - wall (mesh is included) 
+  //...
 
   // This is as weird as it looks, but LIGGGHTS want their array this way
   array_local[0] = rel_vels.data() + array_offset;
@@ -472,109 +340,66 @@ void FixCollisionTracker::post_force(int vflag)
 
 /* ---------------------------------------------------------------------- */
 
-void FixCollisionTracker::print_atom_pair_info(int i, int j)
-{
-  double **x = atom->x;
-  double **v = atom->v;
-  double **f = atom->f;
-  printf("Atom i[%d]: x[%f,%f,%f]; Atom j[%d]: x[%f,%f,%f]\n", i,x[i][0],x[i][1],x[i][2],j,x[j][0],x[j][1],x[j][2]);
-  printf("Atom i[%d]: v[%f,%f,%f]; Atom j[%d]: v[%f,%f,%f]\n", i,v[i][0],v[i][1],v[i][2],j,v[j][0],v[j][1],v[j][2]);
-}
-
-/* ---------------------------------------------------------------------- */
-
-void FixCollisionTracker::print_atom_info(int i)
-{
-  double **x = atom->x;
-  double **v = atom->v;
-  //double **f = atom->f;
-  printf("Atom i[%d]: x[%f,%f,%f]; v[%f,%f,%f]\n", i,x[i][0],x[i][1],x[i][2],v[i][0],v[i][1],v[i][2]);
-}
-
-/* ---------------------------------------------------------------------- */
-
-void FixCollisionTracker::print_contact_status(SurfacesIntersectData& sidata)//, int iter) //, IContactHistorySetup* hsetup)
+// Should only be called once
+inline bool FixCollisionTracker::check_collision(SurfacesIntersectData& sidata)
 {
   double *const particles_were_in_contact = &sidata.contact_history[particles_were_in_contact_offset];
   double *const pre_particles_were_in_contact = &sidata.contact_history[pre_particles_were_in_contact_offset];
-  double *const prev_step_point = &sidata.contact_history[contact_point_offset];
-  //fprintf(screen, "The offset is: %i\n", particles_were_in_contact_offset);
-  //fprintf(screen , "if statment %i\n", *particles_were_in_contact == SURFACES_INTERSECT);
 
-  /*
-  if (*particles_were_in_contact == SURFACES_INTERSECT) {
-    fprintf(screen , "Particles %i and %i are in contact\n", sidata.i, sidata.j);
-  } else {
-    fprintf(screen , "Particles %i and %i are not in contact\n", sidata.i, sidata.j);
-  }
-  */
   bool pre_intersect = *pre_particles_were_in_contact == SURFACES_INTERSECT;
   bool intersect = *particles_were_in_contact == SURFACES_INTERSECT;
-
-  //printf("Particles were intersecting: %i, are: %i\n", pre_intersect, intersect); 
-  if (intersect && !pre_intersect)
-  {
-    ++ncollisions;
-    compute_normal(sidata);
-    compute_relative_velocity(sidata);
-
-    //rel_vels.push_back(rel_v);
-    //rel_vels.push_back(rel_v);
-
-    //print_atom_pair_info(sidata.i,sidata.j);
-
-    double point_of_contact[6];
-    compute_local_contact(sidata, point_of_contact, point_of_contact+3);
-    int nind = 6;
-    if (sidata.j >= atom->nlocal)
-      nind = 3;
-
-    for (int i = 0; i < nind; ++i)
-    {
-      lcol.push_back(point_of_contact[i]);
-    }
-
-    // Projecting contact point to octant of unit cube
-    if(cube_projection)
-    {
-      double result[3];
-      unit_cube_oct_projection(sidata.i, point_of_contact, result);
-      unit_cube_oct_indexing(result);
-      if (sidata.j <= atom->nlocal)
-      {
-        unit_cube_oct_projection(sidata.j, point_of_contact+3, result);
-        unit_cube_oct_indexing(result);
-      }
-    }
-    /*
-    vector_local[size_local_rows++] = rel_v;
-    if (size_local_rows == vector_local_size) 
-    {
-      vector_local_size += DELTA;
-      memory->grow(vector_local, vector_local_size, "fix/collision/tracker");
-    }
-    */
-    // printf("The relative velocity of the particles at the time of impact was: %f \n", rel_v);
-  }
-  
-  //  bool intersect = checkSurfaceIntersect(sidata);
-  //  printf("Particles(%d,%d) intersect %d\n", sidata.i, sidata.j, intersect);
-  //  printf("Intersection point: %f,%f,%f\n", prev_step_point[0], prev_step_point[1], prev_step_point[2]);  
-  //  printf("Total number of collisions: %i\n", ncollisions); 
-
+ 
   *pre_particles_were_in_contact = *particles_were_in_contact; 
+  
+  return intersect && !pre_intersect;
+}
+
+/* ---------------------------------------------------------------------- */
+
+void FixCollisionTracker::resolve_contact_status(SurfacesIntersectData& sidata)
+{
+  if (!check_collision(sidata))
+    return;
+    
+  bool jislocal = sidata.j < atom->nlocal;
+
+  compute_normal(sidata);
+  double vels[2]; 
+  compute_relative_velocity(sidata, vels, vels+1);
+
+  double point_of_contact[6];
+  compute_local_contact(sidata, point_of_contact, point_of_contact+3);
+
+  rel_vels.push_back(vels[0]);
+  rel_vels.push_back(vels[1]);
+  for (int i = 0; i < 3; ++i)
+    lcol.push_back(point_of_contact[i]);
+
+  if (jislocal)
+  {
+    rel_vels.push_back(vels[0]);
+    rel_vels.push_back(vels[1]); 
+    for (int i = 3; i < 6; ++i)
+      lcol.push_back(point_of_contact[i]);
+  }
+
+  // Projecting contact point to octant of unit cube
+  if(!cube_projection)
+    return;
+
+  double result[3];
+  unit_cube_oct_projection(sidata.i, point_of_contact, result);
+  unit_cube_oct_indexing(result);
+  if (jislocal)
+  {
+    unit_cube_oct_projection(sidata.j, point_of_contact+3, result);
+    unit_cube_oct_indexing(result);
+  }
 } 
 
 /* ---------------------------------------------------------------------- */
 
-double FixCollisionTracker::compute_scalar()
-{
-  return InternalValue;
-}
-
-/* ---------------------------------------------------------------------- */
-
-void FixCollisionTracker::compute_relative_velocity(SurfacesIntersectData& sidata)
+void FixCollisionTracker::compute_relative_velocity(SurfacesIntersectData& sidata, double* normal, double* tangent)
 {
   double *const prev_step_point = &sidata.contact_history[contact_point_offset];
   int iPart = sidata.i;
@@ -583,32 +408,22 @@ void FixCollisionTracker::compute_relative_velocity(SurfacesIntersectData& sidat
   // v1 = v + cross(w,(p-x))
   double a_i[3]; 
   double b_i[3];
-  vectorSubtract3D(prev_step_point, atom->x[iPart], a_i);
-  vectorCross3D(atom->omega[iPart], a_i, b_i);
-  vectorAdd3D(atom->v[iPart], b_i, a_i);
-  // ...
   double a_j[3]; 
   double b_j[3];
+  vectorSubtract3D(prev_step_point, atom->x[iPart], a_i);
   vectorSubtract3D(prev_step_point, atom->x[jPart], a_j);
+  vectorCross3D(atom->omega[iPart], a_i, b_i);
   vectorCross3D(atom->omega[jPart], a_j, b_j);
+  vectorAdd3D(atom->v[iPart], b_i, a_i);
   vectorAdd3D(atom->v[jPart], b_j, a_j);
 
   // relv = dot((v1-v2),sidata.en)
   double rel_v[3];
   vectorSubtract3D(a_i, a_j, rel_v);
   double res = vectorDot3D(rel_v, sidata.en);
-  double rel_vel = res > 0 ? res : -res;
-
-  double tan_res = sqrt(vectorDot3D(rel_v, rel_v) - res * res);
-
-  rel_vels.push_back(rel_vel);
-  rel_vels.push_back(tan_res);
-
-  if (jPart < atom->nlocal) {
-    rel_vels.push_back(rel_vel);
-    rel_vels.push_back(tan_res);
-  }
-
+  
+  *normal = res > 0 ? res : -res;
+  *tangent = sqrt(vectorDot3D(rel_v, rel_v) - res * res);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -672,14 +487,14 @@ void FixCollisionTracker::unit_cube_oct_projection(int iPart, double *contact, d
 
 void FixCollisionTracker::unit_cube_oct_indexing(double *cube_proj)
 {
-  if(cube_proj[0] >= 1) // Project to x side
+  if (cube_proj[0] >= cube_proj[1] && cube_proj[0] >= cube_proj[2]) // Project to x side
   {
     //calculating indexes
     int y = std::min(y_nsplit-1, (int)floor(y_nsplit*cube_proj[1]));
     int z = std::min(z_nsplit-1, (int)floor(z_nsplit*cube_proj[2]));
     x_octsurface[y][z]++; //(y,z)
   }
-  else if(cube_proj[1] >= 1) // Project to y side
+  else if(cube_proj[1] >= cube_proj[2]) // Project to y side
   {
     //calculating indexes
     int x = std::min(x_nsplit-1, (int)floor(x_nsplit*cube_proj[0]));
@@ -692,7 +507,7 @@ void FixCollisionTracker::unit_cube_oct_indexing(double *cube_proj)
     int x = std::min(x_nsplit-1, (int)floor(x_nsplit*cube_proj[0]));
     int y = std::min(y_nsplit-1, (int)floor(y_nsplit*cube_proj[1]));
     z_octsurface[x][y]++; //(x,y)
-  }
+  } 
 }
 
 /* ---------------------------------------------------------------------- */
@@ -717,3 +532,24 @@ double* FixCollisionTracker::get_triangle_contact_history(TriMesh *mesh, FixCont
   }
   return NULL;
 }
+
+/* ---------------------------------------------------------------------- */
+
+void FixCollisionTracker::print_atom_pair_info(int i, int j)
+{
+  double **x = atom->x;
+  double **v = atom->v;
+  printf("Atom i[%d]: x[%f,%f,%f]; Atom j[%d]: x[%f,%f,%f]\n", i,x[i][0],x[i][1],x[i][2],j,x[j][0],x[j][1],x[j][2]);
+  printf("Atom i[%d]: v[%f,%f,%f]; Atom j[%d]: v[%f,%f,%f]\n", i,v[i][0],v[i][1],v[i][2],j,v[j][0],v[j][1],v[j][2]);
+}
+
+/* ---------------------------------------------------------------------- */
+
+void FixCollisionTracker::print_atom_info(int i)
+{
+  double **x = atom->x;
+  double **v = atom->v;
+  printf("Atom i[%d]: x[%f,%f,%f]; v[%f,%f,%f]\n", i,x[i][0],x[i][1],x[i][2],v[i][0],v[i][1],v[i][2]);
+}
+
+/* ---------------------------------------------------------------------- */
