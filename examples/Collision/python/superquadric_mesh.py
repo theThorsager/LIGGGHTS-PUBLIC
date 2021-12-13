@@ -110,7 +110,7 @@ def area_normalised(xMesh,yMesh,zMesh):
             p4 = np.array([xMesh[i+1][j+1],yMesh[i+1][j+1],zMesh[i+1][j+1]])
             wTemp.append(triangle_area(p1,p2,p3)+triangle_area(p4,p2,p3))
         w.append(wTemp)
-    return np.array(w)/max(w)
+    return np.array(w)
 
 
 def create_meshgrid(u, uN, v, vN):
@@ -163,20 +163,11 @@ def plot_grid_mayavi(superquadric, spherecube, xSide, ySide, zSide):
     y = u
     z = v
     x,y,z = get_projected_coord(x,y,z,a,b,c,n1,n2)
-    x_area = area_normalised(x,y,z)
-    w = prep_scalar_value(xSide/x_area)
-
     x_pos = mlab.mesh(x, y, z, colormap='Blues')
-    mesh2 = plot_cell_data(x_pos, w, name='X Cell data')
-    surf = mlab.pipeline.surface(mesh2, vmin=vmin, vmax=vmax)
-
     # Negative x side
     x = -x
-    
     x_neg = mlab.mesh(x, y, z, colormap='Blues')
-    mesh2 = plot_cell_data(x_neg, w, name='-X Cell data')
-    surf = mlab.pipeline.surface(mesh2, vmin=vmin, vmax=vmax)
-
+    x_area = area_normalised(x,y,z)
 
     # Create meshgrid for side Y,-Y
     u = np.linspace(-a, a, xN)
@@ -188,19 +179,11 @@ def plot_grid_mayavi(superquadric, spherecube, xSide, ySide, zSide):
     y = np.ones(np.shape(u))*b
     z = v
     x,y,z = get_projected_coord(x,y,z,a,b,c,n1,n2)
-    y_area = area_normalised(x,y,z)
-    w = prep_scalar_value(ySide/y_area)
-    
     y_pos = mlab.mesh(x, y, z, colormap='Blues')
-    mesh2 = plot_cell_data(y_pos, w, name='X Cell data')
-    surf = mlab.pipeline.surface(mesh2, vmin=vmin, vmax=vmax)
-
     # Negative x side
     y = -y
-    
     y_neg = mlab.mesh(x, y, z, colormap='Blues')
-    mesh2 = plot_cell_data(y_neg, w, name='-X Cell data')
-    surf = mlab.pipeline.surface(mesh2, vmin=vmin, vmax=vmax)
+    y_area = area_normalised(x,y,z)
 
     # Create meshgrid for side Z,-Z
     u = np.linspace(-a, a, xN)
@@ -212,18 +195,46 @@ def plot_grid_mayavi(superquadric, spherecube, xSide, ySide, zSide):
     y = v
     z = np.ones(np.shape(u))*c
     x,y,z = get_projected_coord(x,y,z,a,b,c,n1,n2)
-    z_area = area_normalised(x,y,z)
-    w = prep_scalar_value(zSide/z_area)
-    
     z_pos = mlab.mesh(x, y, z, colormap='Blues')
-    mesh2 = plot_cell_data(z_pos, w, name='X Cell data')
-    surf = mlab.pipeline.surface(mesh2, vmin=vmin, vmax=vmax)
-
     # Negative x side
     z = -z
-    
     z_neg = mlab.mesh(x, y, z, colormap='Blues')
-    mesh2 = plot_cell_data(z_neg, w, name='-X Cell data')
+    z_area = area_normalised(x,y,z)
+
+
+    #area_normalisition = False
+    area_normalisition = True
+    if area_normalisition:
+        max_area = np.max([np.max(x_area),np.max(y_area),np.max(z_area)])
+        x_area = x_area/max_area
+        y_area = y_area/max_area
+        z_area = z_area/max_area
+
+        x_w = prep_scalar_value(xSide/x_area)
+        y_w = prep_scalar_value(ySide/y_area)
+        z_w = prep_scalar_value(zSide/z_area)
+
+        vmax = np.max([np.max(x_w),np.max(y_w),np.max(z_w)])
+    else:
+        x_w = prep_scalar_value(xSide)
+        y_w = prep_scalar_value(ySide)
+        z_w = prep_scalar_value(zSide)
+
+
+    # Plot heatmapped sides
+    mesh2 = plot_cell_data(x_pos, x_w, name='X Cell data')
+    surf = mlab.pipeline.surface(mesh2, vmin=vmin, vmax=vmax)
+    mesh2 = plot_cell_data(x_neg, x_w, name='-X Cell data')
+    surf = mlab.pipeline.surface(mesh2, vmin=vmin, vmax=vmax)
+    
+    mesh2 = plot_cell_data(y_pos, y_w, name='X Cell data')
+    surf = mlab.pipeline.surface(mesh2, vmin=vmin, vmax=vmax)
+    mesh2 = plot_cell_data(y_neg, y_w, name='-X Cell data')
+    surf = mlab.pipeline.surface(mesh2, vmin=vmin, vmax=vmax)
+    
+    mesh2 = plot_cell_data(z_pos, z_w, name='X Cell data')
+    surf = mlab.pipeline.surface(mesh2, vmin=vmin, vmax=vmax)
+    mesh2 = plot_cell_data(z_neg, z_w, name='-X Cell data')
     surf = mlab.pipeline.surface(mesh2, vmin=vmin, vmax=vmax)
 
     #mlab.colorbar(title='Phase', orientation='vertical', nb_labels=3)
