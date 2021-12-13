@@ -73,10 +73,8 @@ def plot_superquadric_mayavi(superquadric,n=16):
     ax_ranges = [-2, 2, -2, 2, -2, 2]
     ax_extent = ax_ranges * np.repeat(ax_scale, 2)
 
-    superquad_surf = mlab.mesh(x, y, z, colormap='Blues')
-    #superquad_surf.actor.actor.scale = ax_scale
-    #mlab.outline(superquad_surf, color=(.7, .7, .7), extent=ax_extent)
-    #mlab.axes(superquad_surf, color=(.7, .7, .7), extent=ax_extent, ranges=ax_ranges, xlabel='x', ylabel='y', zlabel='z')
+    #superquad_surf = mlab.mesh(x, y, z, colormap='Blues')
+    superquad_surf = mlab.mesh(x, y, z, colormap='Blues',representation='wireframe')
 
     mlab.view(.0, -5.0, 4)
     mlab.show()
@@ -115,12 +113,12 @@ def plot_grid_mayavi(superquadric, spherecube, xSide, ySide, zSide):
     ax_extent = ax_ranges * np.repeat(ax_scale, 2)
 
     # Create meshgrid for side X,-X
-    u = np.linspace(-unit, unit, yN)
-    v = np.linspace(-unit, unit, zN)
+    u = np.linspace(-b, b, yN)
+    v = np.linspace(-c, c, zN)
     u,v = np.meshgrid(u,v)
 
     # Positive x side
-    x = np.ones(np.shape(u))
+    x = np.ones(np.shape(u))*a
     y = u
     z = v
     x,y,z = get_projected_coord(x,y,z,a,b,c,n1,n2)
@@ -143,16 +141,16 @@ def plot_grid_mayavi(superquadric, spherecube, xSide, ySide, zSide):
     superquad_surf.mlab_source.dataset.cell_data.update()
     superquad_surf.actor.mapper.scalar_mode = 'use_cell_data'
     mesh2 = mlab.pipeline.set_active_attribute(superquad_surf,cell_scalars='-X Cell data') 
-    surf = mlab.pipeline.surface(mesh2,colormap='Blues')
+    surf = mlab.pipeline.surface(mesh2,colormap='Oranges')
 
-    # Create meshgrid for side X,-X
-    u = np.linspace(-unit, unit, xN)
-    v = np.linspace(-unit, unit, zN)
+    # Create meshgrid for side Y,-Y
+    u = np.linspace(-a, a, xN)
+    v = np.linspace(-c, c, zN)
     u,v = np.meshgrid(u,v)
 
     # Positive y side
     x = u
-    y = np.ones(np.shape(u))
+    y = np.ones(np.shape(u))*b
     z = v
     x,y,z = get_projected_coord(x,y,z,a,b,c,n1,n2)
     w = prep_scalar_value(ySide)
@@ -174,18 +172,18 @@ def plot_grid_mayavi(superquadric, spherecube, xSide, ySide, zSide):
     superquad_surf.mlab_source.dataset.cell_data.update()
     superquad_surf.actor.mapper.scalar_mode = 'use_cell_data'
     mesh2 = mlab.pipeline.set_active_attribute(superquad_surf,cell_scalars='-Y Cell data') 
-    surf = mlab.pipeline.surface(mesh2,colormap='Blues')
+    surf = mlab.pipeline.surface(mesh2,colormap='Oranges')
 
 
-    # Create meshgrid for side X,-X
-    u = np.linspace(-unit, unit, xN)
-    v = np.linspace(-unit, unit, yN)
+    # Create meshgrid for side Z,-Z
+    u = np.linspace(-a, a, xN)
+    v = np.linspace(-b, b, yN)
     u,v = np.meshgrid(u,v)
 
     # Positive z side
     x = u
     y = v
-    z = np.ones(np.shape(u))
+    z = np.ones(np.shape(u))*c
     x,y,z = get_projected_coord(x,y,z,a,b,c,n1,n2)
     w = prep_scalar_value(zSide)
     #superquad_surf = mlab.mesh(x, y, z, representation='wireframe', colormap='Oranges')
@@ -206,7 +204,7 @@ def plot_grid_mayavi(superquadric, spherecube, xSide, ySide, zSide):
     superquad_surf.mlab_source.dataset.cell_data.update()
     superquad_surf.actor.mapper.scalar_mode = 'use_cell_data'
     mesh2 = mlab.pipeline.set_active_attribute(superquad_surf,cell_scalars='-Z Cell data') 
-    surf = mlab.pipeline.surface(mesh2,colormap='Blues')
+    surf = mlab.pipeline.surface(mesh2,colormap='Oranges')
 
     #mlab.colorbar(title='Phase', orientation='vertical', nb_labels=3)
     #mlab.colorbar()
@@ -215,7 +213,7 @@ def plot_grid_mayavi(superquadric, spherecube, xSide, ySide, zSide):
     mlab.show()
 
 
-def plot_superquadric_matplotlib(fig=None,ax=None,show=True,n=16):
+def plot_superquadric_matplotlib(superquad, fig=None,ax=None,show=True,n=16):
 
     if not fig:
         fig = plt.figure()
@@ -229,14 +227,14 @@ def plot_superquadric_matplotlib(fig=None,ax=None,show=True,n=16):
     omega = np.linspace(-np.pi, np.pi, n_samples, endpoint=True)
     eta, omega = np.meshgrid(eta, omega)
 
-    a = 1#0.005
-    b = 1#0.005
-    c = 1#0.00225
+    a = superquad.a
+    b = superquad.b
+    c = superquad.c
 
-    e1 = 0.5 # theta roundness
-    e2 = 0.16667 # phi roundness
-    n1 = 2/e1 # Blockiness parameter
-    n2 = 2/e2 # Blockiness parameter
+    e1 = superquad.e1
+    e2 = superquad.e2
+    n1 = superquad.n1
+    n2 = superquad.n2
 
     x = a * fexp(np.cos(eta), e1) * fexp(np.cos(omega), e2)
     y = b * fexp(np.cos(eta), e1) * fexp(np.sin(omega), e2)
@@ -254,27 +252,21 @@ def g(x):
     return np.tan(np.pi/4*x)
 
 
-def plot_grid_matplotlib(fig=None,ax=None,show=True):
+def plot_grid_matplotlib(superquad, fig=None,ax=None,show=True):
 
     if not fig:
         fig = plt.figure()
     if not ax:
         ax = fig.add_subplot(projection='3d')
 
-    a = 1#0.005
-    b = 1#0.005
-    c = 1#0.00225
+    a = superquad.a
+    b = superquad.b
+    c = superquad.c
 
-    #a = a/2
-    #b = b/2
-    #c = c/2
-
-    e1 = 0.5 # theta roundness
-    e2 = 0.16667 # phi roundness
-    n1 = 2/e1 # Blockiness parameter
-    n2 = 2/e2 # Blockiness 
-    #e1 = 2/n1
-    #e2 = 2/n2
+    e1 = superquad.e1
+    e2 = superquad.e2
+    n1 = superquad.n1
+    n2 = superquad.n2
 
     unit = 1
     gridsize = 10
@@ -303,12 +295,6 @@ def plot_grid_matplotlib(fig=None,ax=None,show=True):
     #ax.plot_wireframe(x, y, z, color='r')
     x,y,z = get_projected_coord(x,y,z,a,b,c,n1,n2)
     ax.plot_wireframe(x, y, z, color='m')
-
-
-    # Shift grid out a bit so it is not covered by superquadric
-    x = 1.05 * x
-    y = 1.05 * y
-    z = 1.05 * z
 
     #ax.plot_wireframe(x, y, z, color='r')
 
@@ -340,8 +326,15 @@ def get_projected_coord(x,y,z,a,b,c,n1,n2):
 def get_octant(path):
     with open(path, newline='') as csvfile:
         linereader = csv.reader(csvfile, delimiter=',')
-        parmeters = next(linereader)
-        xN,yN,zN = [int(s) for s in parmeters]
+
+        parameters = next(linereader)
+        a,b,c,n1,n2 = [float(s) for s in parameters]
+
+        superquad = Superquadric(a=a,b=b,c=c,e1=2/n1,e2=2/n2,n1=n1,n2=n2)
+
+        parameters = next(linereader)
+        xN,yN,zN = [int(s) for s in parameters]
+
         xSide = []
         ySide = []
         zSide = []
@@ -358,7 +351,7 @@ def get_octant(path):
             zSide.append(l)
 
         # Expand dimension from octant to full cube
-        sc = Spherecube(2*xN,2*yN,2*zN)
+        spherecube = Spherecube(2*xN,2*yN,2*zN)
 
         # Expand sides from octant to full  
         xSide = [*xSide[::-1], *xSide]
@@ -370,32 +363,18 @@ def get_octant(path):
         zSide = [*zSide[::-1], *zSide]
         zSide = [[*i[::-1],*i] for i in zSide]
 
-        return sc, xSide, ySide, zSide
+        return spherecube, superquad, xSide, ySide, zSide
 
 
 if __name__ == "__main__":
 
     args = get_args()
-    sc, xSide, ySide, zSide = get_octant(args.file)
+    sc, sq, xSide, ySide, zSide = get_octant(args.file)
 
-    a = 1#0.005
-    b = 1#0.005
-    c = 1#0.00225
+    #sq = Superquadric(a=7,b=3.5,c=2.5,e1=2/4,e2=2/2,n1=4,n2=2)
 
-    #scale = 0.5
-    #a = scale*a
-    #b = scale*b
-    #c = scale*c
-
-    e1 = 0.5 # theta roundness
-    e2 = 0.16667 # phi roundness
-    n1 = 2/e1 # Blockiness parameter
-    n2 = 2/e2 # Blockiness 
-
-    superquad = Superquadric(a=a,b=b,c=c,e1=e1,e2=e2,n1=n1,n2=n2)
-
-    #plot_superquadric_mayavi(superquad,n=8)
-    plot_grid_mayavi(superquad, sc, xSide, ySide, zSide)
+    #plot_superquadric_mayavi(sq,n=32)
+    plot_grid_mayavi(sq, sc, xSide, ySide, zSide)
 
 
 '''
