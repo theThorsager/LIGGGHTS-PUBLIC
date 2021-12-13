@@ -135,7 +135,7 @@ def plot_grid_mayavi(superquadric, spherecube, xSide, ySide, zSide):
     ax_ranges = [-2, 2, -2, 2, -2, 2]
     ax_extent = ax_ranges * np.repeat(ax_scale, 2)
     vmin = 0
-    vmax = 0.5
+    vmax = np.max([np.max(np.array(xSide).flatten()),np.max(np.array(ySide).flatten()),np.max(np.array(zSide).flatten())])
 
 
     # Create meshgrid for side X,-X
