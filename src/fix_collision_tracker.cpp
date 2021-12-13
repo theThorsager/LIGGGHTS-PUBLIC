@@ -314,6 +314,11 @@ void FixCollisionTracker::print_cube_projection(FILE *fp)
   if (me != 0)
     return;
 
+  // Assuming all atoms have same shape
+  double* shape = atom->shape[0];
+  double* blockiness = atom->blockiness[0];
+
+  fprintf(fp,"%f, %f, %f, %f, %f\n", shape[0], shape[1], shape[2], blockiness[0], blockiness[1]);
   fprintf(fp,"%d, %d, %d\n", x_nsplit, y_nsplit, z_nsplit);
   // Print x side
   for(int y = 0; y < y_nsplit; y++)
