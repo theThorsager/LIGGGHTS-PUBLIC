@@ -39,7 +39,6 @@
     Copyright 2009-2012 JKU Linz
 ------------------------------------------------------------------------- */
 
-#include <vector>
 #ifdef FIX_CLASS
 
 FixStyle(collision/tracker,FixCollisionTracker)
@@ -51,10 +50,10 @@ FixStyle(collision/tracker,FixCollisionTracker)
 
 #include "fix.h"
 #include "contact_interface.h"
-#include "superquadric.h"
 #include "pair_gran.h"
 #include "tri_mesh.h"
 #include "fix_contact_history_mesh.h"
+#include <vector>
 
 using namespace LIGGGHTS;
 using namespace ContactModels;
@@ -81,6 +80,8 @@ class FixCollisionTracker : public Fix {
 
   std::vector<double> rel_vels;
   std::vector<double> lcol;
+  double* rel_all; 
+  double* col_all;
   int array_offset = 0;
 
   bool cube_projection;
@@ -90,6 +91,9 @@ class FixCollisionTracker : public Fix {
   int** x_octsurface;
   int** y_octsurface;
   int** z_octsurface;
+  int** x_octsurface_all;
+  int** y_octsurface_all;
+  int** z_octsurface_all;
 
   char* filename;  
   int me;

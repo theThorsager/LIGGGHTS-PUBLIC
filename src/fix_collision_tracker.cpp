@@ -39,12 +39,9 @@
     Copyright 2009-2012 JKU Linz
 ------------------------------------------------------------------------- */
 
-
-
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include <cmath>
 #include <vector>
 #include "atom.h"
 #include "pair.h"
@@ -52,42 +49,27 @@
 #include "error.h"
 #include "fix_collision_tracker.h"
 #include "pair_gran.h"
-#include "contact_models.h"
 #include "force.h"
 
 #include "neigh_list.h"
 
-#include "pointers.h"
-#include "lammps.h"
 #include "contact_interface.h"
-#include "property_registry.h"
-#include "settings.h"
-#include "contact_model_constants.h"
-#include "contact_model_base.h"
-#include "surface_model_base.h"
-#include "normal_model_base.h"
-#include "tangential_model_base.h"
-#include "rolling_model_base.h"
-#include "cohesion_model_base.h"
-#include "style_surface_model.h"
-#include "style_normal_model.h"
-#include "style_tangential_model.h"
-#include "style_rolling_model.h"
-#include "style_cohesion_model.h"
 
 #include "fix.h"
-#include "fix_insert.h"
-#include "fix_insert_stream.h"
-#include "fix_insert_stream_predefined.h"
 #include "fix_wall_gran.h"
 #include "fix_contact_history_mesh.h"
+#include "tri_mesh.h"
 
+#include "superquadric.h"
 #include "math_extra_liggghts_nonspherical.h"
 
+#if !defined(_WINDOWS) && !defined(__MINGW32__)
+#include <sys/stat.h>
+#endif
 
-using namespace LAMMPS_NS;
+using namespace LIGGGHTS;
+using namespace ContactModels;
 using namespace FixConst;
-using namespace LIGGGHTS::ContactModels;
 
 /* ---------------------------------------------------------------------- */
 
@@ -129,7 +111,7 @@ FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
   int iarg = 4;
   while (iarg < narg) {
     if (strcmp(arg[iarg],"file") == 0) {
-      if (iarg+2 > narg) error->all(FLERR,"Illegal fix print command");
+      if (iarg+2 > narg) error->all(FLERR,"Illegal fix collision tracker: file command");
       if (1){ //me == 0) {
         int n = strlen(arg[iarg+1]) + 1;
         filename = new char[n];
@@ -164,10 +146,42 @@ FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
       memset(y_octsurface[0], 0, sizeof(**y_octsurface)*x_nsplit*z_nsplit);
       memset(z_octsurface[0], 0, sizeof(**z_octsurface)*x_nsplit*y_nsplit);
 
+      if (me == 0)
+      {
+        memory->create(x_octsurface_all, y_nsplit, z_nsplit, "xprojection_all");
+        memory->create(y_octsurface_all, x_nsplit, z_nsplit, "yprojection_all");
+        memory->create(z_octsurface_all, x_nsplit, y_nsplit, "zprojection_all");
+      }
       iarg += 4;
     }
   }
 
+  if (me == 0)
+  {
+    rel_all = memory->create(rel_all, 2, "Fix_Collision_Tracker_velocities");
+    col_all = memory->create(col_all, 3, "Fix_Collision_Tracker_collision");
+  }
+
+
+  // check whether the folder is accessible, not available on windows
+#if !defined(_WINDOWS) && !defined(__MINGW32__)
+    std::string fname(filename);
+    std::size_t last_slash = fname.rfind("/");
+    // check if we use directories at all
+    if (last_slash != std::string::npos)
+    {
+        std::size_t next_slash = fname.find("/", 1);
+        while (next_slash != std::string::npos)
+        {
+            std::string curdir = fname.substr(0, next_slash);
+            struct stat statbuf;
+            const bool exists = (stat(curdir.c_str(), &statbuf) != -1) && S_ISDIR(statbuf.st_mode);
+            if (!exists)
+                mkdir(curdir.c_str(), S_IRWXU | S_IRGRP | S_IXGRP);
+            next_slash = fname.find("/", next_slash+1);
+        }
+    }
+#endif
 }
 
 /* ---------------------------------------------------------------------- */
@@ -178,6 +192,17 @@ FixCollisionTracker::~FixCollisionTracker()
   memory->destroy(x_octsurface);
   memory->destroy(y_octsurface);
   memory->destroy(z_octsurface);
+  if (me == 0)
+  {
+    memory->destroy(rel_all);
+    memory->destroy(col_all);
+    if (cube_projection)
+    {
+      memory->destroy(x_octsurface_all);
+      memory->destroy(y_octsurface_all);
+      memory->destroy(z_octsurface_all);
+    }
+  }
 }
 
 /* ---------------------------------------------------------------------- */
@@ -198,16 +223,15 @@ void FixCollisionTracker::end_of_step()
     return;
   
   openfile();
-  if (!fp)
-  {
-    // log error?
-    return;
-  }
 
   if(cube_projection)
   {
-    fprintf(fp,"%d, %d, %d\n", x_nsplit, y_nsplit, z_nsplit);
     print_cube_projection(fp);
+    // Zero out array
+    // Using a trick based on how memory->creates allocates memory
+    memset(x_octsurface[0], 0, sizeof(**x_octsurface)*y_nsplit*z_nsplit);
+    memset(y_octsurface[0], 0, sizeof(**y_octsurface)*x_nsplit*z_nsplit);
+    memset(z_octsurface[0], 0, sizeof(**z_octsurface)*x_nsplit*y_nsplit);
   }
   else
   {
@@ -215,17 +239,49 @@ void FixCollisionTracker::end_of_step()
     double * col = lcol.data();
     int n = rel_vels.size() / 2;
 
-    for (int i = 0; i < n; ++i)
-      fprintf(fp,"%f %f %f %f %f\n", rel[2*i], rel[2*i+1], col[3*i], col[3*i+1], col[3*i+2]);
+    int n_all, size;
+    MPI_Reduce(&n, &n_all, 1, MPI_INT, MPI_SUM, 0, world);
+    MPI_Comm_size(world, &size);
+    if (me == 0)
+    {
+      rel_all = memory->grow(rel_all, n_all*2, "Fix_Collision_Tracker_velocities");
+      col_all = memory->grow(col_all, n_all*3, "Fix_Collision_Tracker_collision");
+    }
+    int ns[size];
+    MPI_Gather(&n, 1, MPI_INT, ns, 1, MPI_INT, 0, world);
+    int vns[size], cns[size], dvns[size], dcns[size];
+    vns[0] = 2*ns[0];
+    cns[0] = 3*ns[0];
+    dvns[0] = dcns[0] = 0;
+    for (int i = 1; i < size; ++i)
+    {
+      vns[i] = 2*ns[i];
+      cns[i] = 3*ns[i];
+      dvns[i] = dvns[i-1]+2*ns[i-1];
+      dcns[i] = dcns[i-1]+3*ns[i-1];
+    }
+    MPI_Gatherv(rel, n*2, MPI_DOUBLE, rel_all, vns, dvns, MPI_DOUBLE, 0, world);
+    MPI_Gatherv(col, n*3, MPI_DOUBLE, col_all, cns, dcns, MPI_DOUBLE, 0, world);
+
+    if (me == 0)
+      for (int i = 0; i < n_all; ++i)
+        fprintf(fp,"%f %f %f %f %f\n", rel_all[2*i], rel_all[2*i+1], col_all[3*i], col_all[3*i+1], col_all[3*i+2]);
+    }
+
+  if (me == 0)
+  {
+    fflush(fp);
+    fclose(fp);
   }
-  fflush(fp);
-  fclose(fp);
 }
 
 /* ---------------------------------------------------------------------- */
 
 void FixCollisionTracker::openfile()
 {
+  if (me != 0)
+    return;
+
   // if one file per timestep, replace '*' with current timestep  
   char *filecurrent = filename;
   
@@ -234,8 +290,8 @@ void FixCollisionTracker::openfile()
   char *ptr = strchr(filestar,'*');
   if (ptr) {
     *ptr = '\0';
-    sprintf(filecurrent,"%s" BIGINT_FORMAT "_%i" "%s",
-            filestar,update->ntimestep, me, ptr+1);
+    sprintf(filecurrent,"%s" BIGINT_FORMAT "%s",
+            filestar,update->ntimestep, ptr+1);
     *ptr = '*';
       
     fp = fopen(filecurrent,"w");
@@ -244,20 +300,28 @@ void FixCollisionTracker::openfile()
     fp = fopen(filename, "a");
   }
 
-  if (fp == NULL) error->one(FLERR,"Cannot open dump file");
+  if (fp == NULL) error->one(FLERR,"Cannot open collision tracking file.");
 
   delete [] filecurrent;
 }
 
 void FixCollisionTracker::print_cube_projection(FILE *fp)
 {
+  MPI_Reduce(x_octsurface[0], x_octsurface_all[0], y_nsplit*z_nsplit, MPI_INT, MPI_SUM, 0, world); 
+  MPI_Reduce(y_octsurface[0], y_octsurface_all[0], x_nsplit*z_nsplit, MPI_INT, MPI_SUM, 0, world); 
+  MPI_Reduce(z_octsurface[0], z_octsurface_all[0], y_nsplit*x_nsplit, MPI_INT, MPI_SUM, 0, world); 
+
+  if (me != 0)
+    return;
+
+  fprintf(fp,"%d, %d, %d\n", x_nsplit, y_nsplit, z_nsplit);
   // Print x side
   for(int y = 0; y < y_nsplit; y++)
   {
-    fprintf(fp,"%d", x_octsurface[y][0]);
+    fprintf(fp,"%d", x_octsurface_all[y][0]);
     for(int z = 1; z < z_nsplit; z++)
     {
-      fprintf(fp,",%d", x_octsurface[y][z]);
+      fprintf(fp,",%d", x_octsurface_all[y][z]);
     }
     fprintf(fp,"\n");
   }
@@ -265,10 +329,10 @@ void FixCollisionTracker::print_cube_projection(FILE *fp)
   // Print y side
   for(int x = 0; x < x_nsplit; x++)
   {
-    fprintf(fp,"%d", y_octsurface[x][0]);
+    fprintf(fp,"%d", y_octsurface_all[x][0]);
     for(int z = 1; z < z_nsplit; z++)
     {
-      fprintf(fp,",%d", y_octsurface[x][z]);
+      fprintf(fp,",%d", y_octsurface_all[x][z]);
     }
     fprintf(fp,"\n");
   }
@@ -276,10 +340,10 @@ void FixCollisionTracker::print_cube_projection(FILE *fp)
   // Print z side
   for(int x = 0; x < x_nsplit; x++)
   {
-    fprintf(fp,"%d", z_octsurface[x][0]);
+    fprintf(fp,"%d", z_octsurface_all[x][0]);
     for(int y = 1; y < y_nsplit; y++)
     {
-      fprintf(fp,",%d", z_octsurface[x][y]);
+      fprintf(fp,",%d", z_octsurface_all[x][y]);
     }
     fprintf(fp,"\n");
   }
@@ -312,6 +376,9 @@ void FixCollisionTracker::post_force(int vflag)
   // particle - particle
   for (int ii = 0; ii < inum; ii++) {
     const int i = ilist[ii];
+    if (!(mask[i] & groupbit))
+      continue;
+
     sidata.i = i;
   
     double * const all_contact_hist = first_contact_hist ? first_contact_hist[i] : NULL;
@@ -321,6 +388,9 @@ void FixCollisionTracker::post_force(int vflag)
 
     for (int jj = 0; jj < jnum; jj++) {
       const int j = jlist[jj] & NEIGHMASK;
+      if (!(mask[j] & groupbit))
+        continue;
+
       sidata.j = j;
 
       sidata.contact_history = all_contact_hist ? &all_contact_hist[dnum*jj] : NULL;
