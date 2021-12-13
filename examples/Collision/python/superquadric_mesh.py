@@ -84,11 +84,34 @@ def plot_superquadric_mayavi(superquadric,n=16):
 
 def prep_scalar_value(side):
     # Each square consists of 2 triangles
-    scalar = np.transpose(side)
-    scalar = np.array(scalar).flatten()
+    #scalar = np.transpose(side)
+    scalar = np.array(side).flatten()
     scalar = np.append(scalar,scalar)
 
     return scalar
+
+
+def triangle_area(p1,p2,p3):
+    a = p1-p2
+    b = p3-p2
+    area = np.cross(a,b)
+    return np.linalg.norm(area)/2
+
+
+def area_normalised(xMesh,yMesh,zMesh):
+    N,M = np.shape(xMesh)
+    w = []
+    for i in range(N-1):
+        wTemp = []
+        for j in range(M-1):
+            p1 = np.array([xMesh[i][j],yMesh[i][j],zMesh[i][j]])
+            p2 = np.array([xMesh[i+1][j],yMesh[i+1][j],zMesh[i+1][j]])
+            p3 = np.array([xMesh[i][j+1],yMesh[i][j+1],zMesh[i][j+1]])
+            p4 = np.array([xMesh[i+1][j+1],yMesh[i+1][j+1],zMesh[i+1][j+1]])
+            wTemp.append(triangle_area(p1,p2,p3)+triangle_area(p4,p2,p3))
+        w.append(wTemp)
+    return np.array(w)/np.max(w)
+
 
 def plot_grid_mayavi(superquadric, spherecube, xSide, ySide, zSide):
 
@@ -111,6 +134,9 @@ def plot_grid_mayavi(superquadric, spherecube, xSide, ySide, zSide):
     ax_scale = [1.0, 1.0, 1.0] # Need to change later
     ax_ranges = [-2, 2, -2, 2, -2, 2]
     ax_extent = ax_ranges * np.repeat(ax_scale, 2)
+    vmin = 0
+    vmax = 0.5
+
 
     # Create meshgrid for side X,-X
     u = np.linspace(-b, b, yN)
@@ -122,7 +148,8 @@ def plot_grid_mayavi(superquadric, spherecube, xSide, ySide, zSide):
     y = u
     z = v
     x,y,z = get_projected_coord(x,y,z,a,b,c,n1,n2)
-    w = prep_scalar_value(xSide)
+    area = area_normalised(x,y,z)
+    w = prep_scalar_value(xSide/area)
     #superquad_surf = mlab.mesh(x, y, z, representation='wireframe', colormap='Oranges')
     superquad_surf = mlab.mesh(x, y, z, colormap='Blues')
     superquad_surf.mlab_source.dataset.cell_data.scalars = w
@@ -130,7 +157,7 @@ def plot_grid_mayavi(superquadric, spherecube, xSide, ySide, zSide):
     superquad_surf.mlab_source.dataset.cell_data.update()
     superquad_surf.actor.mapper.scalar_mode = 'use_cell_data'
     mesh2 = mlab.pipeline.set_active_attribute(superquad_surf,cell_scalars='X Cell data') 
-    surf = mlab.pipeline.surface(mesh2,colormap='Blues')
+    surf = mlab.pipeline.surface(mesh2, vmin=vmin, vmax=vmax)
 
     # Negative x side
     x = -x
@@ -141,7 +168,7 @@ def plot_grid_mayavi(superquadric, spherecube, xSide, ySide, zSide):
     superquad_surf.mlab_source.dataset.cell_data.update()
     superquad_surf.actor.mapper.scalar_mode = 'use_cell_data'
     mesh2 = mlab.pipeline.set_active_attribute(superquad_surf,cell_scalars='-X Cell data') 
-    surf = mlab.pipeline.surface(mesh2,colormap='Oranges')
+    surf = mlab.pipeline.surface(mesh2, vmin=vmin, vmax=vmax)
 
     # Create meshgrid for side Y,-Y
     u = np.linspace(-a, a, xN)
@@ -153,7 +180,8 @@ def plot_grid_mayavi(superquadric, spherecube, xSide, ySide, zSide):
     y = np.ones(np.shape(u))*b
     z = v
     x,y,z = get_projected_coord(x,y,z,a,b,c,n1,n2)
-    w = prep_scalar_value(ySide)
+    area = area_normalised(x,y,z)
+    w = prep_scalar_value(ySide/area)
     #superquad_surf = mlab.mesh(x, y, z, representation='wireframe', colormap='Oranges')
     superquad_surf = mlab.mesh(x, y, z, colormap='Blues')
     superquad_surf.mlab_source.dataset.cell_data.scalars = w
@@ -161,7 +189,7 @@ def plot_grid_mayavi(superquadric, spherecube, xSide, ySide, zSide):
     superquad_surf.mlab_source.dataset.cell_data.update()
     superquad_surf.actor.mapper.scalar_mode = 'use_cell_data'
     mesh2 = mlab.pipeline.set_active_attribute(superquad_surf,cell_scalars='Y Cell data') 
-    surf = mlab.pipeline.surface(mesh2,colormap='Blues')
+    surf = mlab.pipeline.surface(mesh2, vmin=vmin, vmax=vmax)
 
     # Negative y side
     y = -y
@@ -172,7 +200,7 @@ def plot_grid_mayavi(superquadric, spherecube, xSide, ySide, zSide):
     superquad_surf.mlab_source.dataset.cell_data.update()
     superquad_surf.actor.mapper.scalar_mode = 'use_cell_data'
     mesh2 = mlab.pipeline.set_active_attribute(superquad_surf,cell_scalars='-Y Cell data') 
-    surf = mlab.pipeline.surface(mesh2,colormap='Oranges')
+    surf = mlab.pipeline.surface(mesh2, vmin=vmin, vmax=vmax)
 
 
     # Create meshgrid for side Z,-Z
@@ -185,7 +213,8 @@ def plot_grid_mayavi(superquadric, spherecube, xSide, ySide, zSide):
     y = v
     z = np.ones(np.shape(u))*c
     x,y,z = get_projected_coord(x,y,z,a,b,c,n1,n2)
-    w = prep_scalar_value(zSide)
+    area = area_normalised(x,y,z)
+    w = prep_scalar_value(zSide/area)
     #superquad_surf = mlab.mesh(x, y, z, representation='wireframe', colormap='Oranges')
     superquad_surf = mlab.mesh(x, y, z, colormap='Blues')
     superquad_surf.mlab_source.dataset.cell_data.scalars = w
@@ -193,7 +222,7 @@ def plot_grid_mayavi(superquadric, spherecube, xSide, ySide, zSide):
     superquad_surf.mlab_source.dataset.cell_data.update()
     superquad_surf.actor.mapper.scalar_mode = 'use_cell_data'
     mesh2 = mlab.pipeline.set_active_attribute(superquad_surf,cell_scalars='Z Cell data') 
-    surf = mlab.pipeline.surface(mesh2,colormap='Blues')
+    surf = mlab.pipeline.surface(mesh2, vmin=vmin, vmax=vmax)
 
     # Negative z side
     z = -z
@@ -204,9 +233,10 @@ def plot_grid_mayavi(superquadric, spherecube, xSide, ySide, zSide):
     superquad_surf.mlab_source.dataset.cell_data.update()
     superquad_surf.actor.mapper.scalar_mode = 'use_cell_data'
     mesh2 = mlab.pipeline.set_active_attribute(superquad_surf,cell_scalars='-Z Cell data') 
-    surf = mlab.pipeline.surface(mesh2,colormap='Oranges')
+    surf = mlab.pipeline.surface(mesh2, vmin=vmin, vmax=vmax)
 
     #mlab.colorbar(title='Phase', orientation='vertical', nb_labels=3)
+    mlab.colorbar(object=surf, title='Frequency', orientation='vertical', nb_labels=5)
     #mlab.colorbar()
 
     #mlab.view(.0, -5.0, 4)
@@ -356,12 +386,17 @@ def get_octant(path):
         # Expand sides from octant to full  
         xSide = [*xSide[::-1], *xSide]
         xSide = [[*i[::-1],*i] for i in xSide]
+        xSide = np.transpose(xSide)
 
         ySide = [*ySide[::-1], *ySide]
         ySide = [[*i[::-1],*i] for i in ySide]
+        ySide = np.transpose(ySide)
+
 
         zSide = [*zSide[::-1], *zSide]
         zSide = [[*i[::-1],*i] for i in zSide]
+        zSide = np.transpose(zSide)
+
 
         return spherecube, superquad, xSide, ySide, zSide
 
