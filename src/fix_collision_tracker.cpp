@@ -263,10 +263,16 @@ void FixCollisionTracker::end_of_step()
     MPI_Gatherv(rel, n*2, MPI_DOUBLE, rel_all, vns, dvns, MPI_DOUBLE, 0, world);
     MPI_Gatherv(col, n*3, MPI_DOUBLE, col_all, cns, dcns, MPI_DOUBLE, 0, world);
 
-    if (me == 0)
+    if (me == 0){
+      // Assuming all atoms have same shape
+      double* shape = atom->shape[0];
+      double* blockiness = atom->blockiness[0];
+      fprintf(fp, "# %f %f %f %f %f\n", shape[0], shape[1], shape[2], blockiness[0], blockiness[1]);
+
       for (int i = 0; i < n_all; ++i)
         fprintf(fp,"%f %f %f %f %f\n", rel_all[2*i], rel_all[2*i+1], col_all[3*i], col_all[3*i+1], col_all[3*i+2]);
     }
+  }
 
   if (me == 0)
   {

@@ -26,12 +26,12 @@ for file in onlyfiles:
     with open(mypath + file, newline='') as csvfile:
         spamreader = csv.reader(csvfile, delimiter=' ', quotechar='|')
         for row in spamreader:
-            #print(', '.join(row))
-            vel.append(row[0])
-            tvel.append(row[1])
-            posX.append(row[2])
-            posY.append(row[3])
-            posZ.append(row[4])
+            if not '#' in row[0]:
+                vel.append(row[0])
+                tvel.append(row[1])
+                posX.append(row[2])
+                posY.append(row[3])
+                posZ.append(row[4])
 
 vel = np.array(vel, dtype=float)
 tvel = np.array(tvel, dtype=float)
@@ -39,9 +39,10 @@ posX = np.array(posX, dtype=float)
 posY = np.array(posY, dtype=float)
 posZ = np.array(posZ, dtype=float)
 
+nbins = 40
 # Histogram
 fig = plt.figure()
-plt.hist(vel, density=False, bins=30)  # density=False would make counts
+plt.hist(vel, density=False, bins=nbins)  # density=False would make counts
 plt.ylabel('# of collisions')
 plt.yscale('log')
 plt.xlabel('normal velocity')
@@ -49,7 +50,7 @@ plt.xlabel('normal velocity')
 plt.show(block=True)
 # Histogram
 fig = plt.figure()
-plt.hist(tvel, density=False, bins=30)  # density=False would make counts
+plt.hist(tvel, density=False, bins=nbins)  # density=False would make counts
 plt.ylabel('# of collisions')
 plt.yscale('log')
 plt.xlabel('tangential velocity')
