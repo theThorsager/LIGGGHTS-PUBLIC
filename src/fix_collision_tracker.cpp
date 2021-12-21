@@ -42,6 +42,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <string>
+#include <unordered_map>
 #include <vector>
 #include "atom.h"
 #include "pair.h"
@@ -55,13 +57,18 @@
 
 #include "contact_interface.h"
 
+#include <unordered_map>
+
 #include "fix.h"
 #include "fix_wall_gran.h"
 #include "fix_contact_history_mesh.h"
 #include "tri_mesh.h"
+#include "primitive_wall.h"
 
 #include "superquadric.h"
 #include "math_extra_liggghts_nonspherical.h"
+
+#include <limits>
 
 #if !defined(_WINDOWS) && !defined(__MINGW32__)
 #include <sys/stat.h>
@@ -82,6 +89,31 @@ FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
   particles_were_in_contact_offset = pair_gran->get_history_offset("particles_were_in_contact", "0");
   contact_point_offset = pair_gran->get_history_offset("cpx", "0");
   pre_particles_were_in_contact_offset = pair_gran->get_history_offset("pre_particles_were_in_contact", "0"); // = pair_gran->add_history_value("pre_particles_were_in_contact", "0");
+
+  // modify->fix;
+  // get all the wall fixes
+  nwallfix = modify->n_fixes_style("wall/gran");
+  if (nwallfix != 0)
+  {
+    memory->create(wall_fixes[0], nwallfix, "collisiontrackerwallfixes");
+    int nfix = modify->nfix;
+    int counter = 0;
+    for (int ifix = 0; ifix < nfix; ++ifix)
+    {
+      if (strncmp(modify->fix[ifix]->style, "wall/gran", 9)==0)
+      {
+        wall_fixes[counter++] = static_cast<FixWallGran*>(modify->fix[ifix]);
+      }
+    }
+
+    mwasintersect = (std::unordered_map<int, int>**)memory->smalloc(nwallfix*sizeof(std::unordered_map<int, int>*), "collisiontracker/wallintersection");
+
+    for (int i = 0; i < nwallfix; ++i)
+    {    
+      int nmeshes = wall_fixes[i]->is_mesh_wall() ? wall_fixes[i]->n_meshes() : 1;
+      mwasintersect[i] = new std::unordered_map<int, int>[nmeshes];
+    }
+  }
 
   // local array setup
   size_local_rows = 0;
@@ -110,41 +142,94 @@ FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
 
   int iarg = 4;
   while (iarg < narg) {
-    if (strcmp(arg[iarg],"file") == 0) {
-      if (iarg+2 > narg) error->all(FLERR,"Illegal fix collision tracker: file command");
-      if (1){ //me == 0) {
+    if (strcmp(arg[iarg],"raw") == 0) {
+      if (iarg+2 > narg) error->all(FLERR,"Illegal fix collision tracker: raw command");
+      if (me == 0) {
         int n = strlen(arg[iarg+1]) + 1;
-        filename = new char[n];
-        strcpy(filename,arg[iarg+1]);
-        writetofile = 1;
+        rawname = new char[n];
+        strcpy(rawname,arg[iarg+1]);
       }
+      writeraw = 1;
       iarg += 2;
     }
     else if(strcmp(arg[iarg],"cpoctant") == 0)
     {
-      if (iarg+4 > narg) error->all(FLERR,"Illegal fix cpoctant command");
+      if (iarg+2 > narg) error->all(FLERR,"Illegal fix cpoctant command");
 
       cube_projection = 1;
 
-      // x,y,z sides
-      x_nsplit = atoi(arg[iarg+1]);
-      if (x_nsplit < 1) error->all(FLERR,"x axis split < 1");
+      if (iarg+2 > narg || atoi(arg[iarg+2]) == 0) // single number
+      {
+        int N = atoi(arg[iarg+1]);
+        if (N < 1) error->all(FLERR, "number of buckets N is less than 1");
+       
+        double* shape = atom->shape[0];
+        double factor = shape[1] + shape[2] + shape[1]*shape[2]/shape[0];
+        x_nsplit = (int) sqrt(N * shape[0] / factor);
+        x_nsplit = x_nsplit < 1 ? 1 : x_nsplit;
+        y_nsplit = (int) (x_nsplit * shape[1] / shape[0]);
+        y_nsplit = y_nsplit < 1 ? 1 : y_nsplit;
+        z_nsplit = (int) (x_nsplit * shape[2] / shape[0]);
+        z_nsplit = z_nsplit < 1 ? 1 : z_nsplit;
+        iarg += 2;
+      }
+      else
+      {
+        // x,y,z sides
+        x_nsplit = atoi(arg[iarg+1]);
+        if (x_nsplit < 1) error->all(FLERR,"x axis split < 1");
 
-      y_nsplit = atoi(arg[iarg+2]);
-      if (y_nsplit < 1) error->all(FLERR,"y axis split < 1");
-      
-      z_nsplit = atoi(arg[iarg+3]);
-      if (z_nsplit < 1) error->all(FLERR,"z axis split < 1");
+        y_nsplit = atoi(arg[iarg+2]);
+        if (y_nsplit < 1) error->all(FLERR,"y axis split < 1");
+        
+        z_nsplit = atoi(arg[iarg+3]);
+        if (z_nsplit < 1) error->all(FLERR,"z axis split < 1");
 
-      memory->create(x_octsurface, y_nsplit, z_nsplit, "xprojection");
-      memory->create(y_octsurface, x_nsplit, z_nsplit, "yprojection");
-      memory->create(z_octsurface, x_nsplit, y_nsplit, "zprojection");
+        iarg += 4;
+      }
+
+      // check for more arguments
+      while (iarg < narg && strcmp(arg[iarg], "range") == 0)
+      {
+        if (iarg+2<narg && strcmp(arg[iarg+1], "full")==0)
+        {
+          int n = strlen(arg[iarg+2]) + 1;
+          octfilenames.push_back(new char[n]);
+          strcpy((octfilenames.back()),arg[iarg+2]);
+          rangefrom.push_back(-1.);
+          rangeto.push_back(std::numeric_limits<double>::max());
+          iarg += 3;
+        }
+        else if (iarg+3<narg)
+        {
+          int n = strlen(arg[iarg+3]) + 1;
+          octfilenames.push_back(new char[n]);
+          strcpy((octfilenames.back()),arg[iarg+3]);
+          rangefrom.push_back(std::stod(arg[iarg+1]));
+          rangeto.push_back(std::stod(arg[iarg+2]));
+          iarg += 4;
+        }
+      }
+      if (octfilenames.size() == 0)
+      {
+        // create a default file
+        int n = strlen("cpoctant_full*.csv") + 1;
+        octfilenames.push_back(new char[n]);
+        strcpy((octfilenames.back()),"cpoctant_full*.csv");
+        rangefrom.push_back(-1.);
+        rangeto.push_back(std::numeric_limits<double>::max());
+      }
+      nfiles = octfilenames.size();
+
+      memory->create(x_octsurface, nfiles, y_nsplit, z_nsplit, "xprojection");
+      memory->create(y_octsurface, nfiles, x_nsplit, z_nsplit, "yprojection");
+      memory->create(z_octsurface, nfiles, x_nsplit, y_nsplit, "zprojection");
 
       // Zero out newly allocated array
       // Using a trick based on how memory->creates allocates memory
-      memset(x_octsurface[0], 0, sizeof(**x_octsurface)*y_nsplit*z_nsplit);
-      memset(y_octsurface[0], 0, sizeof(**y_octsurface)*x_nsplit*z_nsplit);
-      memset(z_octsurface[0], 0, sizeof(**z_octsurface)*x_nsplit*y_nsplit);
+      memset(x_octsurface[0][0], 0, sizeof(***x_octsurface)*y_nsplit*z_nsplit*nfiles);
+      memset(y_octsurface[0][0], 0, sizeof(***y_octsurface)*x_nsplit*z_nsplit*nfiles);
+      memset(z_octsurface[0][0], 0, sizeof(***z_octsurface)*x_nsplit*y_nsplit*nfiles);
 
       if (me == 0)
       {
@@ -152,8 +237,9 @@ FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
         memory->create(y_octsurface_all, x_nsplit, z_nsplit, "yprojection_all");
         memory->create(z_octsurface_all, x_nsplit, y_nsplit, "zprojection_all");
       }
-      iarg += 4;
     }
+    else
+      iarg+=1;
   }
 
   if (me == 0)
@@ -165,22 +251,34 @@ FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
 
   // check whether the folder is accessible, not available on windows
 #if !defined(_WINDOWS) && !defined(__MINGW32__)
-    std::string fname(filename);
-    std::size_t last_slash = fname.rfind("/");
-    // check if we use directories at all
-    if (last_slash != std::string::npos)
-    {
-        std::size_t next_slash = fname.find("/", 1);
-        while (next_slash != std::string::npos)
-        {
-            std::string curdir = fname.substr(0, next_slash);
-            struct stat statbuf;
-            const bool exists = (stat(curdir.c_str(), &statbuf) != -1) && S_ISDIR(statbuf.st_mode);
-            if (!exists)
-                mkdir(curdir.c_str(), S_IRWXU | S_IRGRP | S_IXGRP);
-            next_slash = fname.find("/", next_slash+1);
-        }
-    }
+  if (writeraw)
+    create_folder(rawname);
+  if (cube_projection)
+    for (int i = 0; i < nfiles; ++i)
+      create_folder(octfilenames[i]);
+#endif
+}
+
+/* ---------------------------------------------------------------------- */
+
+void FixCollisionTracker::create_folder(std::string fname)
+{
+#if !defined(_WINDOWS) && !defined(__MINGW32__)
+  std::size_t last_slash = fname.rfind("/");
+  // check if we use directories at all
+  if (last_slash != std::string::npos)
+  {
+      std::size_t next_slash = fname.find("/", 1);
+      while (next_slash != std::string::npos)
+      {
+          std::string curdir = fname.substr(0, next_slash);
+          struct stat statbuf;
+          const bool exists = (stat(curdir.c_str(), &statbuf) != -1) && S_ISDIR(statbuf.st_mode);
+          if (!exists)
+              mkdir(curdir.c_str(), S_IRWXU | S_IRGRP | S_IXGRP);
+          next_slash = fname.find("/", next_slash+1);
+      }
+  }
 #endif
 }
 
@@ -203,6 +301,15 @@ FixCollisionTracker::~FixCollisionTracker()
       memory->destroy(z_octsurface_all);
     }
   }
+
+  if (nwallfix != 0)
+  {
+    for (int i = 0; i < nwallfix; ++i)
+      delete[] mwasintersect[i];
+    
+    memory->sfree(mwasintersect);
+  //  memory->destroy(wall_fixes); // is funky
+  }
 }
 
 /* ---------------------------------------------------------------------- */
@@ -219,22 +326,29 @@ int FixCollisionTracker::setmask()
 
 void FixCollisionTracker::end_of_step()
 {
-  if (!writetofile)
-    return;
-  
-  openfile();
-
   if(cube_projection)
   {
-    print_cube_projection(fp);
+    for (int i = 0; i < nfiles; ++i)
+    {
+      openfile(octfilenames[i]);
+      print_cube_projection(fp, i);
+ 
+      if (me == 0)
+      {
+        fflush(fp);
+        fclose(fp);
+      }
+    }
     // Zero out array
     // Using a trick based on how memory->creates allocates memory
-    memset(x_octsurface[0], 0, sizeof(**x_octsurface)*y_nsplit*z_nsplit);
-    memset(y_octsurface[0], 0, sizeof(**y_octsurface)*x_nsplit*z_nsplit);
-    memset(z_octsurface[0], 0, sizeof(**z_octsurface)*x_nsplit*y_nsplit);
+    memset(x_octsurface[0][0], 0, sizeof(***x_octsurface)*y_nsplit*z_nsplit*nfiles);
+    memset(y_octsurface[0][0], 0, sizeof(***y_octsurface)*x_nsplit*z_nsplit*nfiles);
+    memset(z_octsurface[0][0], 0, sizeof(***z_octsurface)*x_nsplit*y_nsplit*nfiles);
   }
-  else
+  if (writeraw)
   {
+    openfile(rawname);
+
     double * rel = rel_vels.data();
     double * col = lcol.data();
     int n = rel_vels.size() / 2;
@@ -271,19 +385,16 @@ void FixCollisionTracker::end_of_step()
 
       for (int i = 0; i < n_all; ++i)
         fprintf(fp,"%f %f %f %f %f\n", rel_all[2*i], rel_all[2*i+1], col_all[3*i], col_all[3*i+1], col_all[3*i+2]);
+      
+      fflush(fp);
+      fclose(fp);
     }
-  }
-
-  if (me == 0)
-  {
-    fflush(fp);
-    fclose(fp);
   }
 }
 
 /* ---------------------------------------------------------------------- */
 
-void FixCollisionTracker::openfile()
+void FixCollisionTracker::openfile(char* filename)
 {
   if (me != 0)
     return;
@@ -311,11 +422,11 @@ void FixCollisionTracker::openfile()
   delete [] filecurrent;
 }
 
-void FixCollisionTracker::print_cube_projection(FILE *fp)
+void FixCollisionTracker::print_cube_projection(FILE *fp, int i)
 {
-  MPI_Reduce(x_octsurface[0], x_octsurface_all[0], y_nsplit*z_nsplit, MPI_INT, MPI_SUM, 0, world); 
-  MPI_Reduce(y_octsurface[0], y_octsurface_all[0], x_nsplit*z_nsplit, MPI_INT, MPI_SUM, 0, world); 
-  MPI_Reduce(z_octsurface[0], z_octsurface_all[0], y_nsplit*x_nsplit, MPI_INT, MPI_SUM, 0, world); 
+  MPI_Reduce(x_octsurface[i][0], x_octsurface_all[0], y_nsplit*z_nsplit, MPI_INT, MPI_SUM, 0, world); 
+  MPI_Reduce(y_octsurface[i][0], y_octsurface_all[0], x_nsplit*z_nsplit, MPI_INT, MPI_SUM, 0, world); 
+  MPI_Reduce(z_octsurface[i][0], z_octsurface_all[0], y_nsplit*x_nsplit, MPI_INT, MPI_SUM, 0, world); 
 
   if (me != 0)
     return;
@@ -406,12 +517,148 @@ void FixCollisionTracker::post_force(int vflag)
 
       sidata.contact_history = all_contact_hist ? &all_contact_hist[dnum*jj] : NULL;
      
-      resolve_contact_status(sidata);
+      if (check_collision(sidata))
+        resolve_contact_status(sidata);
     }
   }
 
   // particle - wall (mesh is included) 
-  //...
+  for (int ifix = 0; ifix < nwallfix; ++ifix)
+  {
+    FixWallGran *wallfix = wall_fixes[ifix];
+    if (wallfix->is_mesh_wall())
+    {
+      FixMeshSurface** meshes = wallfix->mesh_list();
+      int nmeshes = wallfix->n_meshes();
+      for (int imesh = 0; imesh < nmeshes; ++imesh)
+      {
+        FixMeshSurface* mesh = meshes[imesh];
+        TriMesh* tmesh = mesh->triMesh();
+        int nTriAll = tmesh->sizeLocal() + tmesh->sizeGhost();
+        FixContactHistoryMesh *fix_contact = mesh->contactHistory();
+  
+        FixNeighlistMesh *meshNeighlist = mesh->meshNeighlist();
+  
+        // Do things for moving wall here
+        double *** vMesh;
+        MultiVectorContainer<double,3,3> *vMeshC = tmesh->prop().getElementProperty<MultiVectorContainer<double,3,3> >("v");
+        if(vMeshC)
+          vMesh = vMeshC->begin();
+  
+        for (int iTri = 0; iTri < nTriAll; ++iTri)
+        { 
+         const std::vector<int> & neighborList = meshNeighlist->get_contact_list(iTri);
+         const int numneigh = neighborList.size();
+         int idTri = tmesh->id(iTri);
+         for(int iCont = 0; iCont < numneigh; iCont++)
+         {
+           const int iPart = neighborList[iCont];
+             if (iPart >= atom->nlocal || !(mask[iPart] & groupbit))
+               continue;
+  
+           bool intersecting = fix_contact->get_intersectflag(iPart, idTri);
+           if (intersecting && is_collision_wall(ifix, imesh, iPart))
+           {                
+             // get contact point
+             // ComputePairGranLocal *thing = wallfix->compute_wall_gran_local(); trash
+             Superquadric particle(atom->x[iPart], atom->quaternion[iPart], atom->shape[iPart], atom->blockiness[iPart]);
+             double delta[3], contact_point[3], bary[3];
+             tmesh->resolveTriSuperquadricContact(iTri, delta, contact_point, particle, bary);
+              
+      //       printf("%f, %f, %f\n", contact_point[0],  contact_point[1],  contact_point[2]); 
+             // get relative velocities
+             double normal[3];
+             compute_normal_wall(iPart, contact_point, normal);
+             
+             // v1 = v + cross(w,(p-x))  speed particle
+             double a_i[3]; 
+             double b_i[3];
+             vectorSubtract3D(contact_point, atom->x[iPart], a_i);
+             vectorCross3D(atom->omega[iPart], a_i, b_i);
+             vectorAdd3D(atom->v[iPart], b_i, a_i);
+             // speed wall
+             double v_wall[3] = {0.,0.,0.};
+             if(vMeshC)
+             {
+                 for(int i = 0; i < 3; i++)
+                     v_wall[i] = (bary[0]*vMesh[iTri][0][i] +
+                                  bary[1]*vMesh[iTri][1][i] +
+                                  bary[2]*vMesh[iTri][2][i] );
+             }
+  
+             double rel_v[3];
+             vectorSubtract3D(a_i, v_wall, rel_v);
+             double res = vectorDot3D(rel_v, normal);
+             
+             double velnormal = res > 0 ? res : -res;
+             double veltangent = sqrt(vectorDot3D(rel_v, rel_v) - res * res);
+            
+             double iLocal[3], iResult[3];
+             vectorSubtract3D(contact_point, atom->x[iPart], iLocal);
+             MathExtraLiggghtsNonspherical::rotate_global2local(atom->quaternion[iPart], iLocal, iResult);
+
+             store_data(iPart, velnormal, veltangent, iResult);
+           }         
+         }
+        }
+      }
+    } 
+    else // is primative wall
+    {
+      PrimitiveWall *wall = wallfix->primitiveWall();
+  
+      // if shear, set velocity accordingly
+      if (wallfix->is_moving()) printf("Does not support moving primative walls.");
+      
+      // loop neighbor list
+      int *neighborList;
+      int nNeigh = wall->getNeighbors(neighborList);
+      
+      double delta[3];
+      for (int iCont = 0; iCont < nNeigh ; iCont++, neighborList++)
+      { 
+        int iPart = *neighborList;
+        
+        if(!(mask[iPart] & groupbit) || iPart >= atom->nlocal) continue;
+        
+        double deltan = wall->resolveContact(atom->x[iPart], atom->radius[iPart], delta);
+        if(deltan <= 0)
+        { 
+          double sphere_contact_point[3];
+          vectorAdd3D(atom->x[iPart], delta, sphere_contact_point);
+          double closestPoint[3], point_of_lowest_potential[3];
+  
+          Superquadric particle(atom->x[iPart], atom->quaternion[iPart], atom->shape[iPart], atom->blockiness[iPart]);
+          bool intersectflag = particle.plane_intersection(delta, sphere_contact_point, closestPoint, point_of_lowest_potential);
+          //deltan = -MathExtraLiggghtsNonspherical::point_wall_projection(delta, sphere_contact_point, closestPoint, closestPointProjection);
+          if (intersectflag && is_collision_wall(ifix, 0, iPart))
+          {
+            double normal[3];
+            compute_normal_wall(iPart, closestPoint, normal);
+            
+            // v1 = v + cross(w,(p-x))  speed particle
+            double a_i[3]; 
+            double b_i[3];
+            vectorSubtract3D(closestPoint, atom->x[iPart], a_i);
+            vectorCross3D(atom->omega[iPart], a_i, b_i);
+            vectorAdd3D(atom->v[iPart], b_i, a_i);
+  
+            double res = vectorDot3D(a_i, normal);
+            
+            double velnormal = res > 0 ? res : -res;
+            double veltangent = sqrt(vectorDot3D(a_i, a_i) - res * res);
+  
+            double iLocal[3], iResult[3];
+            vectorSubtract3D(closestPoint, atom->x[iPart], iLocal);
+            MathExtraLiggghtsNonspherical::rotate_global2local(atom->quaternion[iPart], iLocal, iResult);
+            store_data(iPart, velnormal, veltangent, iResult);
+          }
+        }
+      }
+    }
+  }
+
+  set_previous_wall_collision();
 
   // This is as weird as it looks, but LIGGGHTS want their array this way
   array_local[0] = rel_vels.data() + array_offset;
@@ -419,6 +666,29 @@ void FixCollisionTracker::post_force(int vflag)
   array_offset += size_local_rows * 2;
 }
 
+/* ---------------------------------------------------------------------- */
+
+void FixCollisionTracker::set_previous_wall_collision()
+{
+  // Shift to next values
+  for (int ifix = 0; ifix < nwallfix; ++ifix){
+    FixWallGran *wallfix = wall_fixes[ifix];
+    int nmeshes = wallfix->n_meshes();
+    for (int imesh = 0; imesh < nmeshes; ++imesh)
+      for (auto iter = mwasintersect[ifix][imesh].begin(); iter != mwasintersect[ifix][imesh].end(); ++iter)
+        iter->second = iter->second>>1;
+  }
+}
+
+/* ---------------------------------------------------------------------- */
+
+bool FixCollisionTracker::is_collision_wall(const int ifix, const int imesh, const int iPart)
+{
+  int * prevres = &mwasintersect[ifix][imesh][iPart];
+  bool collision = !((*prevres) & 1); 
+  * prevres |= 3;  // set prev to intersecting and keep more parts of this mesh from registering a collision
+  return collision;
+}
 /* ---------------------------------------------------------------------- */
 
 // Should only be called once
@@ -437,11 +707,30 @@ inline bool FixCollisionTracker::check_collision(SurfacesIntersectData& sidata)
 
 /* ---------------------------------------------------------------------- */
 
+void FixCollisionTracker::store_data(int iPart, double velnormal, double veltangent, double* contact_point)
+{
+  rel_vels.push_back(velnormal);
+  rel_vels.push_back(veltangent);
+  lcol.push_back(contact_point[0]);
+  lcol.push_back(contact_point[1]);
+  lcol.push_back(contact_point[2]);
+
+  if (cube_projection)
+  {           
+    double result[3];
+    unit_cube_oct_projection(iPart, contact_point, result);
+    for (int i = 0; i < nfiles; ++i)
+    {
+      if (rangefrom[i] <= velnormal && rangeto[i] >= velnormal)
+        unit_cube_oct_indexing(result, i);
+    }
+  }
+}
+
+/* ---------------------------------------------------------------------- */
+
 void FixCollisionTracker::resolve_contact_status(SurfacesIntersectData& sidata)
 {
-  if (!check_collision(sidata))
-    return;
-    
   bool jislocal = sidata.j < atom->nlocal;
 
   compute_normal(sidata);
@@ -451,31 +740,9 @@ void FixCollisionTracker::resolve_contact_status(SurfacesIntersectData& sidata)
   double point_of_contact[6];
   compute_local_contact(sidata, point_of_contact, point_of_contact+3);
 
-  rel_vels.push_back(vels[0]);
-  rel_vels.push_back(vels[1]);
-  for (int i = 0; i < 3; ++i)
-    lcol.push_back(point_of_contact[i]);
-
+  store_data(sidata.i, vels[0], vels[1], point_of_contact);
   if (jislocal)
-  {
-    rel_vels.push_back(vels[0]);
-    rel_vels.push_back(vels[1]); 
-    for (int i = 3; i < 6; ++i)
-      lcol.push_back(point_of_contact[i]);
-  }
-
-  // Projecting contact point to octant of unit cube
-  if(!cube_projection)
-    return;
-
-  double result[3];
-  unit_cube_oct_projection(sidata.i, point_of_contact, result);
-  unit_cube_oct_indexing(result);
-  if (jislocal)
-  {
-    unit_cube_oct_projection(sidata.j, point_of_contact+3, result);
-    unit_cube_oct_indexing(result);
-  }
+    store_data(sidata.j, vels[0], vels[1], point_of_contact+3);
 } 
 
 /* ---------------------------------------------------------------------- */
@@ -509,6 +776,18 @@ void FixCollisionTracker::compute_relative_velocity(SurfacesIntersectData& sidat
 
 /* ---------------------------------------------------------------------- */
 
+void FixCollisionTracker::compute_normal_wall(const int iPart, const double* contact_point, double* normal)
+{
+  Superquadric particle_i(atom->x[iPart], atom->quaternion[iPart], atom->shape[iPart], atom->blockiness[iPart]);
+
+  particle_i.shape_function_gradient_global(contact_point, particle_i.gradient);
+
+  vectorCopy3D(particle_i.gradient, normal);
+  vectorNormalize3D(normal);
+}
+
+/* ---------------------------------------------------------------------- */
+
 void FixCollisionTracker::compute_normal(SurfacesIntersectData& sidata)
 {
   double *const prev_step_point = &sidata.contact_history[contact_point_offset];
@@ -516,10 +795,8 @@ void FixCollisionTracker::compute_normal(SurfacesIntersectData& sidata)
   int iPart = sidata.i;
   int jPart = sidata.j;
 
-  Superquadric particle_i;
-  Superquadric particle_j;
-  particle_i.set(atom->x[iPart], atom->quaternion[iPart], atom->shape[iPart], atom->blockiness[iPart]);
-  particle_j.set(atom->x[jPart], atom->quaternion[jPart], atom->shape[jPart], atom->blockiness[jPart]);
+  Superquadric particle_i(atom->x[iPart], atom->quaternion[iPart], atom->shape[iPart], atom->blockiness[iPart]);
+  Superquadric particle_j(atom->x[jPart], atom->quaternion[jPart], atom->shape[jPart], atom->blockiness[jPart]);
 
   particle_i.shape_function_gradient_global(prev_step_point, particle_i.gradient);
   particle_j.shape_function_gradient_global(prev_step_point, particle_j.gradient);
@@ -566,28 +843,28 @@ void FixCollisionTracker::unit_cube_oct_projection(int iPart, double *contact, d
 
 /* ---------------------------------------------------------------------- */
 
-void FixCollisionTracker::unit_cube_oct_indexing(double *cube_proj)
+void FixCollisionTracker::unit_cube_oct_indexing(double *cube_proj, int i)
 {
   if (cube_proj[0] >= cube_proj[1] && cube_proj[0] >= cube_proj[2]) // Project to x side
   {
     //calculating indexes
     int y = std::min(y_nsplit-1, (int)floor(y_nsplit*cube_proj[1]));
     int z = std::min(z_nsplit-1, (int)floor(z_nsplit*cube_proj[2]));
-    x_octsurface[y][z]++; //(y,z)
+    x_octsurface[i][y][z]++; //(y,z)
   }
   else if(cube_proj[1] >= cube_proj[2]) // Project to y side
   {
     //calculating indexes
     int x = std::min(x_nsplit-1, (int)floor(x_nsplit*cube_proj[0]));
     int z = std::min(z_nsplit-1, (int)floor(z_nsplit*cube_proj[2]));
-    y_octsurface[x][z]++; //(x,z)
+    y_octsurface[i][x][z]++; //(x,z)
   }
   else // Project to z side
   {
     //calculating indexes
     int x = std::min(x_nsplit-1, (int)floor(x_nsplit*cube_proj[0]));
     int y = std::min(y_nsplit-1, (int)floor(y_nsplit*cube_proj[1]));
-    z_octsurface[x][y]++; //(x,y)
+    z_octsurface[i][x][y]++; //(x,y)
   } 
 }
 

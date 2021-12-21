@@ -54,6 +54,7 @@ FixStyle(collision/tracker,FixCollisionTracker)
 #include "tri_mesh.h"
 #include "fix_contact_history_mesh.h"
 #include <vector>
+#include <unordered_map>
 
 using namespace LIGGGHTS;
 using namespace ContactModels;
@@ -69,6 +70,7 @@ class FixCollisionTracker : public Fix {
   void end_of_step();
 
   void compute_normal(SurfacesIntersectData &);
+  void compute_normal_wall(const int, const double*, double*);
   void compute_relative_velocity(SurfacesIntersectData &, double*, double*);
  private:
 
@@ -77,6 +79,10 @@ class FixCollisionTracker : public Fix {
   int particles_were_in_contact_offset;
   int contact_point_offset;
   class PairGran *pair_gran;
+  class FixWallGran ** wall_fixes;
+  int nwallfix;
+  
+  std::unordered_map<int, int>** mwasintersect;
 
   std::vector<double> rel_vels;
   std::vector<double> lcol;
@@ -88,31 +94,43 @@ class FixCollisionTracker : public Fix {
   int x_nsplit;
   int y_nsplit;
   int z_nsplit;
-  int** x_octsurface;
-  int** y_octsurface;
-  int** z_octsurface;
+  int*** x_octsurface;
+  int*** y_octsurface;
+  int*** z_octsurface;
   int** x_octsurface_all;
   int** y_octsurface_all;
   int** z_octsurface_all;
 
-  char* filename;  
+  //char* filename;  
   int me;
   FILE *fp;
   int writetofile = 0;
 
-  void openfile();
+
+  char* rawname;
+  int writeraw;
+  std::vector<char*> octfilenames;
+  std::vector<double> rangefrom;
+  std::vector<double> rangeto;
+  int nfiles;
+
+  void create_folder(std::string);
+  void openfile(char*);
   void resolve_contact_status(SurfacesIntersectData &); 
   bool check_collision(SurfacesIntersectData&);
   void print_atom_pair_info(int i, int j);
   void print_atom_info(int i);
 
+  void set_previous_wall_collision();
+  bool is_collision_wall(const int, const int, const int);
+  void store_data(int, double, double, double*);
   void compute_local_contact(SurfacesIntersectData& sidata, double *iResult, double *jResult);
 
   double* get_triangle_contact_history(TriMesh *mesh, FixContactHistoryMesh *fix_contact, int iPart, int iTri);
 
   void unit_cube_oct_projection(int iPart, double *contact, double *result);
-  void unit_cube_oct_indexing(double *cube_projection);
-  void print_cube_projection(FILE *fp);
+  void unit_cube_oct_indexing(double *cube_projection, int i);
+  void print_cube_projection(FILE *fp, int i);
 };
 
 }

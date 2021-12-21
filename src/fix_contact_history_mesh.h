@@ -114,6 +114,21 @@ class FixContactHistoryMesh : public FixContactHistory {
 
   int get_contact(const int i, const int j);
 
+  inline bool get_intersectflag(int iP, int idTri)
+  { 
+    int *tri = partner_[iP];
+    const int nneighs = fix_nneighs_->get_vector_atom_int(iP);
+    
+    for(int i = 0; i < nneighs; i++)
+    {
+        if(tri[i] == idTri)
+        {
+            return intersectflag_[iP][i];
+        }
+    }
+    return false;
+  }
+
  protected:
 
   MyPage<int> *ipage1_;        // pages of neighbor tri IDs
