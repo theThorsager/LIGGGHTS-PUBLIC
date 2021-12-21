@@ -106,11 +106,11 @@ fix          cad1 all mesh/surface file meshes/wall.stl type 1 curvature 1e-5
 fix          mixer all wall/gran model ${c_model} mesh n_meshes 1 meshes cad1
 						
 # Particle insertion
-create_atoms 1 single 0.0 0.0 0.14
+create_atoms 1 single 0.0 0.0 0.143284
 set atom 1 type 1 shape ${Pr1} ${Pr2} ${Pl} blockiness ${blockiness1} ${blockiness2} density ${Pd}
 
 # Particle insertion
-create_atoms 1 single 0.0 0.0 0.145
+create_atoms 1 single 0.0 0.0 0.147769
 set atom 2 type 1 shape ${Pr1} ${Pr2} ${Pl} blockiness ${blockiness1} ${blockiness2} density ${Pd}
 
 						
@@ -136,7 +136,12 @@ fix           ctg all check/timestep/gran 1 0.01 0.01
 run           1
 unfix         ctg
 
-fix my all collision/tracker 3000 file results*.csv
+fix my all collision/tracker 1000 raw data/data*.csv &
+                            cpoctant 10 10 10 &
+                            range full      octo/full_*.csv &
+                            range 3 100     octo/3_*.csv &
+                            range 1 100     octo/1_*.csv &
+                            range 0.5 100   octo/05_*.csv
 
 # Save simulation to be restarted
 restart       ${saveOutEvery} poly.restart poly.restart
