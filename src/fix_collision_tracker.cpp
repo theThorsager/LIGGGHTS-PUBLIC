@@ -95,7 +95,7 @@ FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
   nwallfix = modify->n_fixes_style("wall/gran");
   if (nwallfix != 0)
   {
-    memory->create(wall_fixes[0], nwallfix, "collisiontrackerwallfixes");
+    wall_fixes = (FixWallGran**)memory->smalloc(nwallfix * sizeof(FixWallGran*), "collisiontrackerwallfixes");
     int nfix = modify->nfix;
     int counter = 0;
     for (int ifix = 0; ifix < nfix; ++ifix)
@@ -308,7 +308,7 @@ FixCollisionTracker::~FixCollisionTracker()
       delete[] mwasintersect[i];
     
     memory->sfree(mwasintersect);
-  //  memory->destroy(wall_fixes); // is funky
+    memory->sfree(wall_fixes); // is funky
   }
 }
 
