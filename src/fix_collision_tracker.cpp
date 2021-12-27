@@ -256,11 +256,14 @@ FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
 
   // check whether the folder is accessible, not available on windows
 #if !defined(_WINDOWS) && !defined(__MINGW32__)
-  if (writeraw)
-    create_folder(rawname);
-  if (cube_projection)
-    for (int i = 0; i < nfiles; ++i)
-      create_folder(octfilenames[i]);
+  if (me == 0)
+  {
+    if (writeraw)
+      create_folder(rawname);
+    if (cube_projection)
+      for (int i = 0; i < nfiles; ++i)
+        create_folder(octfilenames[i]);
+  }
 #endif
 }
 
