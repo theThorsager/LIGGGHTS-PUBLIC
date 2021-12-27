@@ -410,13 +410,102 @@ void FixCollisionTracker::post_force(int vflag)
     }
   }
 
-  // particle - wall (mesh is included) 
-  //...
+  // particle - wall (only mesh and mesh walls, primitive walls are not included) 
+  // Based on public fork https://github.com/ParticulateFlow/LIGGGHTS-PFM (2021-12-26)
+  int nlocal = atom->nlocal;
+  int n_wall_fixes = modify->n_fixes_style("wall/gran");
+  for (int ifix = 0; ifix < n_wall_fixes; ++ifix)
+  {
+    FixWallGran *fwg = static_cast<FixWallGran*>(modify->find_fix_style("wall/gran",ifix));
+
+    if (fwg->is_mesh_wall())
+    {
+      int n_FixMesh = fwg->n_meshes();
+      for (int iMesh = 0; iMesh < n_FixMesh; iMesh++)
+      {
+        TriMesh *mesh = fwg->mesh_list()[iMesh]->triMesh();
+        int nTriAll = mesh->sizeLocal() + mesh->sizeGhost();
+        FixContactHistoryMesh *fix_contact = fwg->mesh_list()[iMesh]->contactHistory();
+        if (!fix_contact) continue; // Skip if null
+
+        // get neighborList and numNeigh
+        FixNeighlistMesh * meshNeighlist = fwg->mesh_list()[iMesh]->meshNeighlist();
+        if (!meshNeighlist) continue; // Skip if null
+
+        for (int iTri = 0; iTri < nTriAll; iTri++)
+        {
+          const std::vector<int> & neighborList = meshNeighlist->get_contact_list(iTri);
+          const int numneigh = neighborList.size();
+
+          for (int iCont = 0; iCont < numneigh; iCont++) {
+
+            const int iPart = neighborList[iCont];
+
+            // do not need to handle ghost particles
+            if (iPart >= nlocal) continue;
+            if (!(mask[iPart] & groupbit) || !(mask[iPart] & fwg->groupbit)) continue;
+
+            double *contact_history = get_triangle_contact_history(mesh, fix_contact, iPart, iTri);
+
+            if (contact_history)
+            {
+              Superquadric particle(atom->x[iPart], atom->quaternion[iPart], atom->shape[iPart], atom->blockiness[iPart]);
+              double delta[3], contact_point[3], bary[3];
+              // Recalculating contact_point. It would be preferable to access already calculated values
+              mesh->resolveTriSuperquadricContact(iTri, delta, contact_point, particle, bary);
+
+              // Negative Baryocentric coordinates are outside of the triangle and not actual contact
+              if(bary[0] >= 0 && bary[1] >= 0 && bary[2] >= 0 )
+              {
+
+                if(contact_history[pre_particles_were_in_contact_offset] == 0)
+                {
+                  /* Do necessary calculations for collisions */
+                }
+
+                printf("iPart: %d, iTri: %d; (%f,%f,%f), (%f,%f,%f)\n", iPart, iTri, atom->x[iPart][0],atom->x[iPart][1],atom->x[iPart][2], atom->v[iPart][0],atom->v[iPart][1],atom->v[iPart][2]);
+                printf("Contact: (%f,%f,%f)\n", contact_point[0],contact_point[1],contact_point[2]);
+                printf("Bary: (%f,%f,%f)\n", bary[0],bary[1],bary[2]);
+                printf("contact_history[%d]: %f\n",2,contact_history[2]);
+
+                // contact_history is not used by wall - particle calculations, but it is zeroed out between contacts
+                // We take advantage of that by setting pre_particles_were_in_contact_offset to 1
+                contact_history[pre_particles_were_in_contact_offset] = 1;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
 
   // This is as weird as it looks, but LIGGGHTS want their array this way
   array_local[0] = rel_vels.data() + array_offset;
   size_local_rows = (rel_vels.size() - array_offset) / 2;
   array_offset += size_local_rows * 2;
+}
+
+/* ---------------------------------------------------------------------- */
+
+double* FixCollisionTracker::get_triangle_contact_history(TriMesh *mesh, FixContactHistoryMesh *fix_contact, int iPart, int iTri)
+{
+  // get contact history of particle iPart and triangle idTri
+  // NOTE: depends on naming in fix_wall_gran!
+
+  std::string fix_nneighs_name("n_neighs_mesh_");
+  fix_nneighs_name += mesh->mesh_id();
+  FixPropertyAtom* fix_nneighs = static_cast<FixPropertyAtom*>(modify->find_fix_property(fix_nneighs_name.c_str(),"property/atom","scalar",0,0,this->style));
+
+  int idTri = mesh->id(iTri);
+  const int nneighs = fix_nneighs->get_vector_atom_int(iPart);
+  for (int j = 0; j < nneighs; ++j)
+  {
+    if (fix_contact->partner(iPart, j) == idTri)
+    {
+      return fix_contact->contacthistory(iPart, j);
+    }
+  }
+  return NULL;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -589,29 +678,6 @@ void FixCollisionTracker::unit_cube_oct_indexing(double *cube_proj)
     int y = std::min(y_nsplit-1, (int)floor(y_nsplit*cube_proj[1]));
     z_octsurface[x][y]++; //(x,y)
   } 
-}
-
-/* ---------------------------------------------------------------------- */
-
-double* FixCollisionTracker::get_triangle_contact_history(TriMesh *mesh, FixContactHistoryMesh *fix_contact, int iPart, int iTri)
-{
-  // get contact history of particle iPart and triangle idTri
-  // NOTE: depends on naming in fix_wall_gran!
-
-  std::string fix_nneighs_name("n_neighs_mesh_");
-  fix_nneighs_name += mesh->mesh_id();
-  FixPropertyAtom* fix_nneighs = static_cast<FixPropertyAtom*>(modify->find_fix_property(fix_nneighs_name.c_str(),"property/atom","scalar",0,0,this->style));
-
-  int idTri = mesh->id(iTri);
-  const int nneighs = fix_nneighs->get_vector_atom_int(iPart);
-  for (int j = 0; j < nneighs; ++j)
-  {
-    if (fix_contact->partner(iPart, j) == idTri)
-    {
-      return fix_contact->contacthistory(iPart, j);
-    }
-  }
-  return NULL;
 }
 
 /* ---------------------------------------------------------------------- */
