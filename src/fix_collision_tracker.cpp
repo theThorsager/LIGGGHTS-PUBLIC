@@ -237,6 +237,10 @@ FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
         memory->create(y_octsurface_all, x_nsplit, z_nsplit, "yprojection_all");
         memory->create(z_octsurface_all, x_nsplit, y_nsplit, "zprojection_all");
       }
+      else
+      {
+        x_octsurface_all = y_octsurface_all = z_octsurface_all = x_octsurface[0]; // to ensure that the MPI buiss has an index to acess, never written to
+      }
     }
     else
       iarg+=1;
