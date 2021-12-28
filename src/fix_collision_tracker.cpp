@@ -139,6 +139,7 @@ FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
   
   MPI_Comm_rank(world,&me); 
   fp = NULL;
+  writeraw = 0;
 
   int iarg = 4;
   while (iarg < narg) {
@@ -567,7 +568,7 @@ void FixCollisionTracker::post_force(int vflag)
 
             double *contact_history = get_triangle_contact_history(mesh, fix_contact, iPart, iTri);
 
-            if (contact_history)
+            if (contact_history && contact_history[pre_particles_were_in_contact_offset] == 0)
             {
               Superquadric particle(atom->x[iPart], atom->quaternion[iPart], atom->shape[iPart], atom->blockiness[iPart]);
               double delta[3], contact_point[3], bary[3];
@@ -577,12 +578,10 @@ void FixCollisionTracker::post_force(int vflag)
               // Negative Baryocentric coordinates are outside of the triangle and not actual contact
               if(bary[0] >= 0 && bary[1] >= 0 && bary[2] >= 0 )
               {
-                if(contact_history[pre_particles_were_in_contact_offset] == 0)
-                {
-                  /* Do necessary calculations for collisions */
-                  printf("iPart: %d, iTri: %d; (%f,%f,%f), (%f,%f,%f)\n", iPart, iTri, atom->x[iPart][0],atom->x[iPart][1],atom->x[iPart][2], atom->v[iPart][0],atom->v[iPart][1],atom->v[iPart][2]);
-                  printf("Contact: (%f,%f,%f)\n", contact_point[0],contact_point[1],contact_point[2]);
-                }
+              
+                /* Do necessary calculations for collisions */
+                printf("iPart: %d, iTri: %d; (%f,%f,%f), (%f,%f,%f)\n", iPart, iTri, atom->x[iPart][0],atom->x[iPart][1],atom->x[iPart][2], atom->v[iPart][0],atom->v[iPart][1],atom->v[iPart][2]);
+                printf("Contact: (%f,%f,%f)\n", contact_point[0],contact_point[1],contact_point[2]);
 
                 // contact_history is not used by wall - particle calculations, but it is zeroed out between contacts
                 // We take advantage of that by setting pre_particles_were_in_contact_offset to 1
