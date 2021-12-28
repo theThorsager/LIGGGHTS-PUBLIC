@@ -116,7 +116,8 @@ class FixCollisionTracker : public Fix {
 
   void create_folder(std::string);
   void openfile(char*);
-  void resolve_contact_status(SurfacesIntersectData &); 
+  void resolve_contact_status(SurfacesIntersectData &);
+  void resolve_mesh_contact_status(double ***vMesh, int iPart, int iTri, double* bary, double* contact_point);
   bool check_collision(SurfacesIntersectData&);
   void print_atom_pair_info(int i, int j);
   void print_atom_info(int i);

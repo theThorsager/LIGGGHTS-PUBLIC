@@ -553,6 +553,12 @@ void FixCollisionTracker::post_force(int vflag)
         FixNeighlistMesh * meshNeighlist = fwg->mesh_list()[iMesh]->meshNeighlist();
         if (!meshNeighlist) continue; // Skip if null
 
+        // Do things for moving wall here
+        double *** vMesh = NULL;
+        MultiVectorContainer<double,3,3> *vMeshC = mesh->prop().getElementProperty<MultiVectorContainer<double,3,3> >("v");
+        if(vMeshC)
+          vMesh = vMeshC->begin();
+
         for (int iTri = 0; iTri < nTriAll; iTri++)
         {
           const std::vector<int> & neighborList = meshNeighlist->get_contact_list(iTri);
@@ -578,14 +584,13 @@ void FixCollisionTracker::post_force(int vflag)
               // Negative Baryocentric coordinates are outside of the triangle and not actual contact
               if(bary[0] >= 0 && bary[1] >= 0 && bary[2] >= 0 )
               {
-              
-                /* Do necessary calculations for collisions */
-                printf("iPart: %d, iTri: %d; (%f,%f,%f), (%f,%f,%f)\n", iPart, iTri, atom->x[iPart][0],atom->x[iPart][1],atom->x[iPart][2], atom->v[iPart][0],atom->v[iPart][1],atom->v[iPart][2]);
-                printf("Contact: (%f,%f,%f)\n", contact_point[0],contact_point[1],contact_point[2]);
+                resolve_mesh_contact_status(vMesh, iPart, iTri, bary,contact_point);
 
                 // contact_history is not used by wall - particle calculations, but it is zeroed out between contacts
                 // We take advantage of that by setting pre_particles_were_in_contact_offset to 1
                 contact_history[pre_particles_were_in_contact_offset] = 1;
+                // Check against multiple collisions happening when particle slides across mesh wall is missing
+                // Baryocentric coordinates may be used for that check
               }
             }
           }
@@ -678,6 +683,42 @@ void FixCollisionTracker::resolve_contact_status(SurfacesIntersectData& sidata)
   if (jislocal)
     store_data(sidata.j, vels[0], vels[1], point_of_contact+3);
 } 
+
+/* ---------------------------------------------------------------------- */
+
+void FixCollisionTracker::resolve_mesh_contact_status(double ***vMesh, int iPart, int iTri, double* bary, double* contact_point)
+{
+  double normal[3];
+  compute_normal_wall(iPart, contact_point, normal);
+
+  // v1 = v + cross(w,(p-x))  speed particle
+  double a_i[3];
+  double b_i[3];
+  vectorSubtract3D(contact_point, atom->x[iPart], a_i);
+  vectorCross3D(atom->omega[iPart], a_i, b_i);
+  vectorAdd3D(atom->v[iPart], b_i, a_i);
+  // speed wall
+  double v_wall[3] = {0.,0.,0.};
+  if(vMesh)
+  {
+      for(int i = 0; i < 3; i++)
+          v_wall[i] = (bary[0]*vMesh[iTri][0][i] +
+                      bary[1]*vMesh[iTri][1][i] +
+                      bary[2]*vMesh[iTri][2][i] );
+  }
+
+  double rel_v[3];
+  vectorSubtract3D(a_i, v_wall, rel_v);
+  double res = vectorDot3D(rel_v, normal);
+
+  double velnormal = res > 0 ? res : -res;
+  double veltangent = sqrt(vectorDot3D(rel_v, rel_v) - res * res);
+
+  double iLocal[3], iResult[3];
+  vectorSubtract3D(contact_point, atom->x[iPart], iLocal);
+  MathExtraLiggghtsNonspherical::rotate_global2local(atom->quaternion[iPart], iLocal, iResult);
+  store_data(iPart, velnormal, veltangent, iResult);
+}
 
 /* ---------------------------------------------------------------------- */
 
