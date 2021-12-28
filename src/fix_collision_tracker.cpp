@@ -139,6 +139,7 @@ FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
   
   MPI_Comm_rank(world,&me); 
   fp = NULL;
+  writeraw = 0;
 
   int iarg = 4;
   while (iarg < narg) {
@@ -239,8 +240,9 @@ FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
       }
       else
       {
-        x_octsurface_all = y_octsurface_all = z_octsurface_all = x_octsurface[0]; // to ensure that the MPI buiss has an index to acess, never written to
+        x_octsurface_all = y_octsurface_all = z_octsurface_all = x_octsurface[0];  // so that they can acess a first index for the MPI buiss
       }
+      iarg += 4;
     }
     else
       iarg+=1;
@@ -255,11 +257,14 @@ FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
 
   // check whether the folder is accessible, not available on windows
 #if !defined(_WINDOWS) && !defined(__MINGW32__)
-  if (writeraw)
-    create_folder(rawname);
-  if (cube_projection)
-    for (int i = 0; i < nfiles; ++i)
-      create_folder(octfilenames[i]);
+  if (me == 0)
+  {
+    if (writeraw)
+      create_folder(rawname);
+    if (cube_projection)
+      for (int i = 0; i < nfiles; ++i)
+        create_folder(octfilenames[i]);
+  }
 #endif
 }
 
@@ -526,143 +531,68 @@ void FixCollisionTracker::post_force(int vflag)
     }
   }
 
-  // particle - wall (mesh is included) 
-  for (int ifix = 0; ifix < nwallfix; ++ifix)
+  // particle - wall (only mesh and mesh walls, primitive walls are not included) 
+  // Based on public fork https://github.com/ParticulateFlow/LIGGGHTS-PFM (2021-12-26)
+  int nlocal = atom->nlocal;
+  int n_wall_fixes = modify->n_fixes_style("wall/gran");
+  for (int ifix = 0; ifix < n_wall_fixes; ++ifix)
   {
-    FixWallGran *wallfix = wall_fixes[ifix];
-    if (wallfix->is_mesh_wall())
-    {
-      FixMeshSurface** meshes = wallfix->mesh_list();
-      int nmeshes = wallfix->n_meshes();
-      for (int imesh = 0; imesh < nmeshes; ++imesh)
-      {
-        FixMeshSurface* mesh = meshes[imesh];
-        TriMesh* tmesh = mesh->triMesh();
-        int nTriAll = tmesh->sizeLocal() + tmesh->sizeGhost();
-        FixContactHistoryMesh *fix_contact = mesh->contactHistory();
-  
-        FixNeighlistMesh *meshNeighlist = mesh->meshNeighlist();
-  
-        // Do things for moving wall here
-        double *** vMesh;
-        MultiVectorContainer<double,3,3> *vMeshC = tmesh->prop().getElementProperty<MultiVectorContainer<double,3,3> >("v");
-        if(vMeshC)
-          vMesh = vMeshC->begin();
-  
-        for (int iTri = 0; iTri < nTriAll; ++iTri)
-        { 
-         const std::vector<int> & neighborList = meshNeighlist->get_contact_list(iTri);
-         const int numneigh = neighborList.size();
-         int idTri = tmesh->id(iTri);
-         for(int iCont = 0; iCont < numneigh; iCont++)
-         {
-           const int iPart = neighborList[iCont];
-             if (iPart >= atom->nlocal || !(mask[iPart] & groupbit))
-               continue;
-  
-           bool intersecting = fix_contact->get_intersectflag(iPart, idTri);
-           if (intersecting && is_collision_wall(ifix, imesh, iPart))
-           {                
-             // get contact point
-             // ComputePairGranLocal *thing = wallfix->compute_wall_gran_local(); trash
-             Superquadric particle(atom->x[iPart], atom->quaternion[iPart], atom->shape[iPart], atom->blockiness[iPart]);
-             double delta[3], contact_point[3], bary[3];
-             tmesh->resolveTriSuperquadricContact(iTri, delta, contact_point, particle, bary);
-              
-      //       printf("%f, %f, %f\n", contact_point[0],  contact_point[1],  contact_point[2]); 
-             // get relative velocities
-             double normal[3];
-             compute_normal_wall(iPart, contact_point, normal);
-             
-             // v1 = v + cross(w,(p-x))  speed particle
-             double a_i[3]; 
-             double b_i[3];
-             vectorSubtract3D(contact_point, atom->x[iPart], a_i);
-             vectorCross3D(atom->omega[iPart], a_i, b_i);
-             vectorAdd3D(atom->v[iPart], b_i, a_i);
-             // speed wall
-             double v_wall[3] = {0.,0.,0.};
-             if(vMeshC)
-             {
-                 for(int i = 0; i < 3; i++)
-                     v_wall[i] = (bary[0]*vMesh[iTri][0][i] +
-                                  bary[1]*vMesh[iTri][1][i] +
-                                  bary[2]*vMesh[iTri][2][i] );
-             }
-  
-             double rel_v[3];
-             vectorSubtract3D(a_i, v_wall, rel_v);
-             double res = vectorDot3D(rel_v, normal);
-             
-             double velnormal = res > 0 ? res : -res;
-             double veltangent = sqrt(vectorDot3D(rel_v, rel_v) - res * res);
-            
-             double iLocal[3], iResult[3];
-             vectorSubtract3D(contact_point, atom->x[iPart], iLocal);
-             MathExtraLiggghtsNonspherical::rotate_global2local(atom->quaternion[iPart], iLocal, iResult);
+    FixWallGran *fwg = static_cast<FixWallGran*>(modify->find_fix_style("wall/gran",ifix));
 
-             store_data(iPart, velnormal, veltangent, iResult);
-           }         
-         }
-        }
-      }
-    } 
-    else // is primative wall
+    if (fwg->is_mesh_wall())
     {
-      PrimitiveWall *wall = wallfix->primitiveWall();
-  
-      // if shear, set velocity accordingly
-      if (wallfix->is_moving()) printf("Does not support moving primative walls.");
-      
-      // loop neighbor list
-      int *neighborList;
-      int nNeigh = wall->getNeighbors(neighborList);
-      
-      double delta[3];
-      for (int iCont = 0; iCont < nNeigh ; iCont++, neighborList++)
-      { 
-        int iPart = *neighborList;
-        
-        if(!(mask[iPart] & groupbit) || iPart >= atom->nlocal) continue;
-        
-        double deltan = wall->resolveContact(atom->x[iPart], atom->radius[iPart], delta);
-        if(deltan <= 0)
-        { 
-          double sphere_contact_point[3];
-          vectorAdd3D(atom->x[iPart], delta, sphere_contact_point);
-          double closestPoint[3], point_of_lowest_potential[3];
-  
-          Superquadric particle(atom->x[iPart], atom->quaternion[iPart], atom->shape[iPart], atom->blockiness[iPart]);
-          bool intersectflag = particle.plane_intersection(delta, sphere_contact_point, closestPoint, point_of_lowest_potential);
-          //deltan = -MathExtraLiggghtsNonspherical::point_wall_projection(delta, sphere_contact_point, closestPoint, closestPointProjection);
-          if (intersectflag && is_collision_wall(ifix, 0, iPart))
-          {
-            double normal[3];
-            compute_normal_wall(iPart, closestPoint, normal);
-            
-            // v1 = v + cross(w,(p-x))  speed particle
-            double a_i[3]; 
-            double b_i[3];
-            vectorSubtract3D(closestPoint, atom->x[iPart], a_i);
-            vectorCross3D(atom->omega[iPart], a_i, b_i);
-            vectorAdd3D(atom->v[iPart], b_i, a_i);
-  
-            double res = vectorDot3D(a_i, normal);
-            
-            double velnormal = res > 0 ? res : -res;
-            double veltangent = sqrt(vectorDot3D(a_i, a_i) - res * res);
-  
-            double iLocal[3], iResult[3];
-            vectorSubtract3D(closestPoint, atom->x[iPart], iLocal);
-            MathExtraLiggghtsNonspherical::rotate_global2local(atom->quaternion[iPart], iLocal, iResult);
-            store_data(iPart, velnormal, veltangent, iResult);
+      int n_FixMesh = fwg->n_meshes();
+      for (int iMesh = 0; iMesh < n_FixMesh; iMesh++)
+      {
+        TriMesh *mesh = fwg->mesh_list()[iMesh]->triMesh();
+        int nTriAll = mesh->sizeLocal() + mesh->sizeGhost();
+        FixContactHistoryMesh *fix_contact = fwg->mesh_list()[iMesh]->contactHistory();
+        if (!fix_contact) continue; // Skip if null
+
+        // get neighborList and numNeigh
+        FixNeighlistMesh * meshNeighlist = fwg->mesh_list()[iMesh]->meshNeighlist();
+        if (!meshNeighlist) continue; // Skip if null
+
+        for (int iTri = 0; iTri < nTriAll; iTri++)
+        {
+          const std::vector<int> & neighborList = meshNeighlist->get_contact_list(iTri);
+          const int numneigh = neighborList.size();
+
+          for (int iCont = 0; iCont < numneigh; iCont++) {
+
+            const int iPart = neighborList[iCont];
+
+            // do not need to handle ghost particles
+            if (iPart >= nlocal) continue;
+            if (!(mask[iPart] & groupbit) || !(mask[iPart] & fwg->groupbit)) continue;
+
+            double *contact_history = get_triangle_contact_history(mesh, fix_contact, iPart, iTri);
+
+            if (contact_history && contact_history[pre_particles_were_in_contact_offset] == 0)
+            {
+              Superquadric particle(atom->x[iPart], atom->quaternion[iPart], atom->shape[iPart], atom->blockiness[iPart]);
+              double delta[3], contact_point[3], bary[3];
+              // Recalculating contact_point. It would be preferable to access already calculated values
+              mesh->resolveTriSuperquadricContact(iTri, delta, contact_point, particle, bary);
+
+              // Negative Baryocentric coordinates are outside of the triangle and not actual contact
+              if(bary[0] >= 0 && bary[1] >= 0 && bary[2] >= 0 )
+              {
+              
+                /* Do necessary calculations for collisions */
+                printf("iPart: %d, iTri: %d; (%f,%f,%f), (%f,%f,%f)\n", iPart, iTri, atom->x[iPart][0],atom->x[iPart][1],atom->x[iPart][2], atom->v[iPart][0],atom->v[iPart][1],atom->v[iPart][2]);
+                printf("Contact: (%f,%f,%f)\n", contact_point[0],contact_point[1],contact_point[2]);
+
+                // contact_history is not used by wall - particle calculations, but it is zeroed out between contacts
+                // We take advantage of that by setting pre_particles_were_in_contact_offset to 1
+                contact_history[pre_particles_were_in_contact_offset] = 1;
+              }
+            }
           }
         }
       }
     }
   }
-
-  set_previous_wall_collision();
 
   // This is as weird as it looks, but LIGGGHTS want their array this way
   array_local[0] = rel_vels.data() + array_offset;
@@ -672,27 +602,27 @@ void FixCollisionTracker::post_force(int vflag)
 
 /* ---------------------------------------------------------------------- */
 
-void FixCollisionTracker::set_previous_wall_collision()
+double* FixCollisionTracker::get_triangle_contact_history(TriMesh *mesh, FixContactHistoryMesh *fix_contact, int iPart, int iTri)
 {
-  // Shift to next values
-  for (int ifix = 0; ifix < nwallfix; ++ifix){
-    FixWallGran *wallfix = wall_fixes[ifix];
-    int nmeshes = wallfix->n_meshes();
-    for (int imesh = 0; imesh < nmeshes; ++imesh)
-      for (auto iter = mwasintersect[ifix][imesh].begin(); iter != mwasintersect[ifix][imesh].end(); ++iter)
-        iter->second = iter->second>>1;
+  // get contact history of particle iPart and triangle idTri
+  // NOTE: depends on naming in fix_wall_gran!
+
+  std::string fix_nneighs_name("n_neighs_mesh_");
+  fix_nneighs_name += mesh->mesh_id();
+  FixPropertyAtom* fix_nneighs = static_cast<FixPropertyAtom*>(modify->find_fix_property(fix_nneighs_name.c_str(),"property/atom","scalar",0,0,this->style));
+
+  int idTri = mesh->id(iTri);
+  const int nneighs = fix_nneighs->get_vector_atom_int(iPart);
+  for (int j = 0; j < nneighs; ++j)
+  {
+    if (fix_contact->partner(iPart, j) == idTri)
+    {
+      return fix_contact->contacthistory(iPart, j);
+    }
   }
+  return NULL;
 }
 
-/* ---------------------------------------------------------------------- */
-
-bool FixCollisionTracker::is_collision_wall(const int ifix, const int imesh, const int iPart)
-{
-  int * prevres = &mwasintersect[ifix][imesh][iPart];
-  bool collision = !((*prevres) & 1); 
-  * prevres |= 3;  // set prev to intersecting and keep more parts of this mesh from registering a collision
-  return collision;
-}
 /* ---------------------------------------------------------------------- */
 
 // Should only be called once
@@ -870,29 +800,6 @@ void FixCollisionTracker::unit_cube_oct_indexing(double *cube_proj, int i)
     int y = std::min(y_nsplit-1, (int)floor(y_nsplit*cube_proj[1]));
     z_octsurface[i][x][y]++; //(x,y)
   } 
-}
-
-/* ---------------------------------------------------------------------- */
-
-double* FixCollisionTracker::get_triangle_contact_history(TriMesh *mesh, FixContactHistoryMesh *fix_contact, int iPart, int iTri)
-{
-  // get contact history of particle iPart and triangle idTri
-  // NOTE: depends on naming in fix_wall_gran!
-
-  std::string fix_nneighs_name("n_neighs_mesh_");
-  fix_nneighs_name += mesh->mesh_id();
-  FixPropertyAtom* fix_nneighs = static_cast<FixPropertyAtom*>(modify->find_fix_property(fix_nneighs_name.c_str(),"property/atom","scalar",0,0,this->style));
-
-  int idTri = mesh->id(iTri);
-  const int nneighs = fix_nneighs->get_vector_atom_int(iPart);
-  for (int j = 0; j < nneighs; ++j)
-  {
-    if (fix_contact->partner(iPart, j) == idTri)
-    {
-      return fix_contact->contacthistory(iPart, j);
-    }
-  }
-  return NULL;
 }
 
 /* ---------------------------------------------------------------------- */
