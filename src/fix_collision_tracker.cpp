@@ -529,38 +529,40 @@ void FixCollisionTracker::post_force(int vflag)
         if(vMeshC)
           vMesh = vMeshC->begin();
 
-        for (int iTri = 0; iTri < nTriAll; iTri++)
+        for (int iPart = 0; iPart < nlocal; ++iPart)
         {
-          const std::vector<int> & neighborList = meshNeighlist->get_contact_list(iTri);
-          const int numneigh = neighborList.size();
-
-          for (int iCont = 0; iCont < numneigh; iCont++) {
-
-            const int iPart = neighborList[iCont];
-
-            // do not need to handle ghost particles
-            if (iPart >= nlocal) continue;
-            if (!(mask[iPart] & groupbit) || !(mask[iPart] & fwg->groupbit)) continue;
-
-            double *contact_history = get_triangle_contact_history(mesh, fix_contact, iPart, iTri);
-
-            if (contact_history && contact_history[pre_particles_were_in_contact_offset] == 0)
+          if (!(mask[iPart] & groupbit) || !(mask[iPart] & fwg->groupbit)) continue;
+          
+          const int nneighs = fix_contact->nneighs(iPart);
+          for (int j = 0; j < nneighs; ++j)
+          {
+            const int idTri = fix_contact->partner(iPart, j);
+            if (idTri != -1)
             {
-              Superquadric particle(atom->x[iPart], atom->quaternion[iPart], atom->shape[iPart], atom->blockiness[iPart]);
-              double delta[3], contact_point[3], bary[3];
-              // Recalculating contact_point. It would be preferable to access already calculated values
-              mesh->resolveTriSuperquadricContact(iTri, delta, contact_point, particle, bary);
+              double * contact_history = fix_contact->contacthistory(iPart, j);
 
-              // Negative Baryocentric coordinates are outside of the triangle and not actual contact
-              if(bary[0] >= 0 && bary[1] >= 0 && bary[2] >= 0 )
+              if (contact_history && contact_history[pre_particles_were_in_contact_offset] == 0)
               {
-                resolve_mesh_contact_status(vMesh, iPart, iTri, bary,contact_point);
+                int iTri = mesh->map(idTri, 0); // can it be something else than 0? the implication is that one idTri can have more than one iTri
+                if (mesh->map_size(idTri) != 1)
+                  printf("Fuck!");
+                
+                Superquadric particle(atom->x[iPart], atom->quaternion[iPart], atom->shape[iPart], atom->blockiness[iPart]);
+                double delta[3], contact_point[3], bary[3];
+                // Recalculating contact_point. It would be preferable to access already calculated values
+                mesh->resolveTriSuperquadricContact(iTri, delta, contact_point, particle, bary);
 
-                // contact_history is not used by wall - particle calculations, but it is zeroed out between contacts
-                // We take advantage of that by setting pre_particles_were_in_contact_offset to 1
-                contact_history[pre_particles_were_in_contact_offset] = 1;
-                // Check against multiple collisions happening when particle slides across mesh wall is missing
-                // Baryocentric coordinates may be used for that check
+                // Negative Baryocentric coordinates are outside of the triangle and not actual contact
+                if(bary[0] >= 0 && bary[1] >= 0 && bary[2] >= 0 )
+                {
+                  resolve_mesh_contact_status(vMesh, iPart, iTri, bary,contact_point);
+
+                  // contact_history is not used by wall - particle calculations, but it is zeroed out between contacts
+                  // We take advantage of that by setting pre_particles_were_in_contact_offset to 1
+                  contact_history[pre_particles_were_in_contact_offset] = 1;
+                  // Check against multiple collisions happening when particle slides across mesh wall is missing
+                  // Baryocentric coordinates may be used for that check
+                }
               }
             }
           }
