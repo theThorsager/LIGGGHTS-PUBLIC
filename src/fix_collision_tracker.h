@@ -79,11 +79,7 @@ class FixCollisionTracker : public Fix {
   int particles_were_in_contact_offset;
   int contact_point_offset;
   class PairGran *pair_gran;
-  class FixWallGran ** wall_fixes;
-  int nwallfix;
   
-  std::unordered_map<int, int>** mwasintersect;
-
   std::vector<double> rel_vels;
   std::vector<double> lcol;
   double* rel_all; 
@@ -104,8 +100,6 @@ class FixCollisionTracker : public Fix {
   //char* filename;  
   int me;
   FILE *fp;
-  int writetofile = 0;
-
 
   char* rawname;
   int writeraw;

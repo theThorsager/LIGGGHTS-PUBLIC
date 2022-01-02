@@ -90,31 +90,6 @@ FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
   contact_point_offset = pair_gran->get_history_offset("cpx", "0");
   pre_particles_were_in_contact_offset = pair_gran->get_history_offset("pre_particles_were_in_contact", "0"); // = pair_gran->add_history_value("pre_particles_were_in_contact", "0");
 
-  // modify->fix;
-  // get all the wall fixes
-  nwallfix = modify->n_fixes_style("wall/gran");
-  if (nwallfix != 0)
-  {
-    wall_fixes = (FixWallGran**)memory->smalloc(nwallfix * sizeof(FixWallGran*), "collisiontrackerwallfixes");
-    int nfix = modify->nfix;
-    int counter = 0;
-    for (int ifix = 0; ifix < nfix; ++ifix)
-    {
-      if (strncmp(modify->fix[ifix]->style, "wall/gran", 9)==0)
-      {
-        wall_fixes[counter++] = static_cast<FixWallGran*>(modify->fix[ifix]);
-      }
-    }
-
-    mwasintersect = (std::unordered_map<int, int>**)memory->smalloc(nwallfix*sizeof(std::unordered_map<int, int>*), "collisiontracker/wallintersection");
-
-    for (int i = 0; i < nwallfix; ++i)
-    {    
-      int nmeshes = wall_fixes[i]->is_mesh_wall() ? wall_fixes[i]->n_meshes() : 1;
-      mwasintersect[i] = new std::unordered_map<int, int>[nmeshes];
-    }
-  }
-
   // local array setup
   size_local_rows = 0;
   size_local_cols = 2;
@@ -155,7 +130,7 @@ FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
     }
     else if(strcmp(arg[iarg],"cpoctant") == 0)
     {
-      if (iarg+2 > narg) error->all(FLERR,"Illegal fix cpoctant command");
+      if (iarg+1 > narg) error->all(FLERR,"Illegal fix cpoctant command");
 
       cube_projection = 1;
 
@@ -174,7 +149,7 @@ FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
         z_nsplit = z_nsplit < 1 ? 1 : z_nsplit;
         iarg += 2;
       }
-      else
+      else if (iarg + 3 < narg)
       {
         // x,y,z sides
         x_nsplit = atoi(arg[iarg+1]);
@@ -188,6 +163,8 @@ FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
 
         iarg += 4;
       }
+      else
+        error->all(FLERR,"Illegal fix cpoctant command");
 
       // check for more arguments
       while (iarg < narg && strcmp(arg[iarg], "range") == 0)
@@ -210,6 +187,8 @@ FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
           rangeto.push_back(std::stod(arg[iarg+2]));
           iarg += 4;
         }
+        else
+          iarg++;
       }
       if (octfilenames.size() == 0)
       {
@@ -309,15 +288,6 @@ FixCollisionTracker::~FixCollisionTracker()
       memory->destroy(y_octsurface_all);
       memory->destroy(z_octsurface_all);
     }
-  }
-
-  if (nwallfix != 0)
-  {
-    for (int i = 0; i < nwallfix; ++i)
-      delete[] mwasintersect[i];
-    
-    memory->sfree(mwasintersect);
-    memory->sfree(wall_fixes); // is funky
   }
 }
 
@@ -422,8 +392,8 @@ void FixCollisionTracker::openfile(char* filename)
       
     fp = fopen(filecurrent,"w");
   } else {
-    sprintf(filecurrent,"%i_%s", me, filestar);
-    fp = fopen(filename, "a");
+    sprintf(filecurrent, BIGINT_FORMAT "_%s", update->ntimestep, filestar);
+    fp = fopen(filecurrent, "w");
   }
 
   if (fp == NULL) error->one(FLERR,"Cannot open collision tracking file.");
@@ -610,14 +580,8 @@ void FixCollisionTracker::post_force(int vflag)
 double* FixCollisionTracker::get_triangle_contact_history(TriMesh *mesh, FixContactHistoryMesh *fix_contact, int iPart, int iTri)
 {
   // get contact history of particle iPart and triangle idTri
-  // NOTE: depends on naming in fix_wall_gran!
-
-  std::string fix_nneighs_name("n_neighs_mesh_");
-  fix_nneighs_name += mesh->mesh_id();
-  FixPropertyAtom* fix_nneighs = static_cast<FixPropertyAtom*>(modify->find_fix_property(fix_nneighs_name.c_str(),"property/atom","scalar",0,0,this->style));
-
   int idTri = mesh->id(iTri);
-  const int nneighs = fix_nneighs->get_vector_atom_int(iPart);
+  const int nneighs = fix_contact->nneighs(iPart);
   for (int j = 0; j < nneighs; ++j)
   {
     if (fix_contact->partner(iPart, j) == idTri)
