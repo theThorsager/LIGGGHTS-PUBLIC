@@ -97,6 +97,14 @@ class FixCollisionTracker : public Fix {
   int** y_octsurface_all;
   int** z_octsurface_all;
 
+  bool permesh = 0;
+  bool store_particle = 1;
+  bool store_wall = 1;
+
+  double shape[3];
+  double blockiness[2];
+  void SetGroupShapeBlockiness();
+
   //char* filename;  
   int me;
   FILE *fp;
@@ -112,6 +120,7 @@ class FixCollisionTracker : public Fix {
   void openfile(char*);
   void resolve_contact_status(SurfacesIntersectData &);
   void resolve_mesh_contact_status(double ***vMesh, int iPart, int iTri, double* bary, double* contact_point);
+  void resolve_primitive_contact_status(int iPart, double* contact_point);
   bool check_collision(SurfacesIntersectData&);
   void print_atom_pair_info(int i, int j);
   void print_atom_info(int i);
@@ -120,9 +129,6 @@ class FixCollisionTracker : public Fix {
   bool is_collision_wall(const int, const int, const int);
   void store_data(int, double, double, double*);
   void compute_local_contact(SurfacesIntersectData& sidata, double *iResult, double *jResult);
-
-  double* get_triangle_contact_history(TriMesh *mesh, FixContactHistoryMesh *fix_contact, int iPart, int iTri);
-
   void unit_cube_oct_projection(int iPart, double *contact, double *result);
   void unit_cube_oct_indexing(double *cube_projection, int i);
   void print_cube_projection(FILE *fp, int i);
