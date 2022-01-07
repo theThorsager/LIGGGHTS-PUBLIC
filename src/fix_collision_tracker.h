@@ -100,6 +100,8 @@ class FixCollisionTracker : public Fix {
   bool permesh = 0;
   bool store_particle = 1;
   bool store_wall = 1;
+  int othergroupbit;
+  bool useothergroup = 0;
 
   double shape[3];
   double blockiness[2];
@@ -125,8 +127,6 @@ class FixCollisionTracker : public Fix {
   void print_atom_pair_info(int i, int j);
   void print_atom_info(int i);
 
-  void set_previous_wall_collision();
-  bool is_collision_wall(const int, const int, const int);
   void store_data(int, double, double, double*);
   void compute_local_contact(SurfacesIntersectData& sidata, double *iResult, double *jResult);
   void unit_cube_oct_projection(int iPart, double *contact, double *result);

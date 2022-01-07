@@ -52,6 +52,7 @@
 #include "fix_collision_tracker.h"
 #include "pair_gran.h"
 #include "force.h"
+#include "group.h"
 
 #include "neigh_list.h"
 
@@ -125,16 +126,17 @@ FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
         rawname = new char[n];
         strcpy(rawname,arg[iarg+1]);
       }
+      SetGroupShapeBlockiness();
       writeraw = 1;
       iarg += 2;
     }
     else if(strcmp(arg[iarg],"cpoctant") == 0)
     {
-      if (iarg+1 > narg) error->all(FLERR,"Illegal fix cpoctant command");
+      if (iarg+2 > narg) error->all(FLERR,"Illegal fix cpoctant command");
 
       cube_projection = 1;
 
-      if (iarg+2 > narg || atoi(arg[iarg+2]) == 0) // single number
+      if (iarg+3 > narg || atoi(arg[iarg+2]) == 0) // single number
       {
         int N = atoi(arg[iarg+1]);
         if (N < 1) error->all(FLERR, "number of buckets N is less than 1");
@@ -222,7 +224,6 @@ FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
       {
         x_octsurface_all = y_octsurface_all = z_octsurface_all = x_octsurface[0];  // so that they can acess a first index for the MPI buiss
       }
-      iarg += 4;
     }
     else if(strcmp(arg[iarg],"type") == 0)
     {
@@ -242,6 +243,17 @@ FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
       else
         error->all(FLERR,"Illegal fix collision tracker: type command");
       
+      iarg += 2;
+    }
+    else if (strcmp(arg[iarg], "othergroup") == 0)
+    {
+      if (iarg+2 > narg) error->all(FLERR,"Illegal fix collision tracker: othergroup command");
+
+      int igroup = group->find(arg[iarg+1]);
+      if (igroup == -1) error->all(FLERR,"Could not find fixcollisiontrackers othergroup fix group ID");
+      othergroupbit = group->bitmask[igroup];
+      useothergroup = 1;
+
       iarg += 2;
     }
     else
@@ -326,8 +338,8 @@ int FixCollisionTracker::setmask()
 
 void FixCollisionTracker::end_of_step()
 {
-  if (cube_projection || writeraw)
-    SetGroupShapeBlockiness();  // Does it need to be run each time we print?
+  //if (cube_projection || writeraw)
+  //  SetGroupShapeBlockiness();  // Does it need to be run each time we print?
 
   if(cube_projection)
   {
@@ -554,9 +566,9 @@ void FixCollisionTracker::post_force(int vflag)
           
           const int nneighs = fix_contact->nneighs(iPart);
           // Disregard any collisions if there has already been contact with this mesh at any triangle
+          bool prev_contact = 0;
           if (permesh)
           {
-            bool prev_contact = 0;
             for (int j = 0; j < nneighs; ++j)
             {
               const int idTri = fix_contact->partner(iPart, j);
@@ -570,9 +582,6 @@ void FixCollisionTracker::post_force(int vflag)
                 }
               }
             }
-
-            if (prev_contact)
-              continue;
           }
 
           for (int j = 0; j < nneighs; ++j)
@@ -582,6 +591,7 @@ void FixCollisionTracker::post_force(int vflag)
             {
               double * contact_history = fix_contact->contacthistory(iPart, j);
 
+              printf("timestep: %i, idTri in contact: %i \n", update->ntimestep, idTri);
               if (contact_history && contact_history[pre_particles_were_in_contact_offset] == 0)
               {
                 int iTri = mesh->map(idTri, 0); // can it be something else than 0? the implication is that one idTri can have more than one iTri
@@ -596,7 +606,8 @@ void FixCollisionTracker::post_force(int vflag)
                 // Negative Baryocentric coordinates are outside of the triangle and not actual contact
                 if(bary[0] >= 0 && bary[1] >= 0 && bary[2] >= 0 )
                 {
-                  resolve_mesh_contact_status(vMesh, iPart, iTri, bary,contact_point);
+                  if (!prev_contact)
+                    resolve_mesh_contact_status(vMesh, iPart, iTri, bary,contact_point);
 
                   // contact_history is not used by wall - particle calculations, but it is zeroed out between contacts
                   // We take advantage of that by setting pre_particles_were_in_contact_offset to 1
@@ -628,7 +639,7 @@ void FixCollisionTracker::post_force(int vflag)
         for (int iCont = 0; iCont < nNeigh; ++iCont, ++neighbourList)
         {
           int iPart = *neighbourList;
-          if (!(mask[iPart] & groupbit)) continue;
+          if (!(mask[iPart] & groupbit) || !(mask[iPart] & fwg->groupbit)) continue;
 
 
           double * contact_history = wall_history[iPart];
@@ -686,7 +697,7 @@ void FixCollisionTracker::SetGroupShapeBlockiness()
     found = 0;
   }
 
-  double shp[3] = {-10.0,0.0,0.0};
+  double shp[3] = {-10.0,-10.0,-10.0};
   double blo[2] = {0.0,0.0};
   if (found)
   {
@@ -704,18 +715,17 @@ void FixCollisionTracker::SetGroupShapeBlockiness()
   MPI_Gather(blo, 2, MPI_DOUBLE, blocks, 2, MPI_DOUBLE, 0, world);
   if (me == 0)
   {
-    found = 0;
-    for (int j = 0; j < size; ++j)
+    int j;
+    for (j = 0; j < size; ++j)
     {
       if (shapes[j*3] > -1)
       {
         vectorCopyN(&shapes[j*3], shape, 3);
         vectorCopyN(&blocks[j*2], blockiness, 2);
-        found = 1;
         break;
       }
     }
-    if (!found) // set some values to avoid issues if non are found
+    if (j == size) // set some values to avoid issues if non are found
     {
       vectorCopyN(shapes, shape, 3);
       vectorCopyN(blocks, blockiness, 2);
@@ -803,9 +813,9 @@ void FixCollisionTracker::resolve_contact_status(SurfacesIntersectData& sidata)
   // Get local atom information
   int *mask = atom->mask;
 
-  if (mask[sidata.i] & groupbit)
+  if ((mask[sidata.i] & groupbit) && (!useothergroup || mask[sidata.j] & othergroupbit))
     store_data(sidata.i, vels[0], vels[1], point_of_contact);
-  if (jislocal && (mask[sidata.j] & groupbit))
+  if (jislocal && (mask[sidata.j] & groupbit) && (!useothergroup || mask[sidata.i] & othergroupbit))
     store_data(sidata.j, vels[0], vels[1], point_of_contact+3);
 } 
 
