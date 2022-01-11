@@ -1,5 +1,8 @@
 ### This simulation involves inserting two particles and collide one against the other
 
+# A single particle affected by gravity is positioned by a mesh wall
+# It is given velocity so it should slide alongside the wall
+
 ## Define event times in seconds
 variable time_run       equal 0.30      # Run time for particles
 variable time_sample    equal 0.002	# Sample time during run images
@@ -69,7 +72,7 @@ newton		off
 communicate	single vel yes
 soft_particles yes
 
-# Processors lay out
+# Processors lay out # Allow for testing multiple processors
 processors 1 2 2
 
 # Declare domain
@@ -131,6 +134,7 @@ fix           ctg all check/timestep/gran 1 0.01 0.01
 run           1
 unfix         ctg
 
+# Our own fix
 fix my all collision/tracker 1000 raw data/data*.csv &
                             cpoctant 10 10 10 &
                             range full      octo/full_*.csv &
@@ -147,4 +151,3 @@ dump          dmp all custom ${writeOutEvery} post/rigid*.dump &
 dump_modify   dmp label version_01
 
 run		${nStepsRun} upto
-create_atoms 1 single 0.0 0.0 0.05

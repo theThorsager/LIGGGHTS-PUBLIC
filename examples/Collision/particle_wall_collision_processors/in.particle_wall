@@ -1,5 +1,8 @@
 ### This simulation involves inserting two particles and collide one against the other
 
+# Two particles are given velocity in z direction and collide with a wall.
+# Multiple processor execution is being tested
+
 ## Define event times in seconds
 variable time_run       equal 0.10      # Run time for particles
 variable time_sample    equal 0.002	# Sample time during run images
@@ -10,7 +13,7 @@ variable time_thermo    equal 1		# Atom and thermal reporting time
 ## Define operating conditions
 variable vin            equal 2.0       # Collision velocity
 variable c_orientation string '1 0 0'   # Colliding particle orientation 
-variable angle          equal 30.0        # Angle
+variable angle          equal 90.0        # Angle
 
 
 ## Define particle and wall properties
@@ -56,7 +59,7 @@ variable dt         equal ${f_ray}*${Rayleigh_t} # Time step based on fraction %
 # Calculations based on steps
 variable nStepsRun      equal (${time_run}-${time_run}%${dt})/${dt}
 variable additionTime   equal (1.0-1.0%${dt})/${dt}
-variable writeOutEvery  equal 1 #(${time_sample}-${time_sample}%${dt})/${dt}
+variable writeOutEvery  equal (${time_sample}-${time_sample}%${dt})/${dt}
 variable writeOutEvery1 equal (${time_sample1}-${time_sample1}%${dt})/${dt}
 variable saveOutEvery   equal (${time_save}-${time_save}%${dt})/${dt}
 variable thermofreq     equal (${time_thermo}-${time_thermo}%${dt})/${dt}
@@ -71,7 +74,7 @@ communicate	single vel yes
 soft_particles yes
 
 # Processors lay out
-processors 1 1 1
+processors 1 2 2
 
 # Declare domain
 region		reg block -0.15 0.15 -0.15 0.15 0.0 0.2 units box
@@ -96,14 +99,19 @@ fix   m4 all property/global coefficientFriction peratomtypepair 2 &
  						${cf_ww} ${cf_pw} &
 						${cf_pw} ${cf_pp}
 
+# Import mesh from cad:
+fix          cad1 all mesh/surface file meshes/wall.stl type 1 curvature 1e-5
+
+# Use the imported mesh as granular wall
+fix          mixer all wall/gran model ${c_model} mesh n_meshes 1 meshes cad1
+
 # Particle insertion
-create_atoms 1 single 0.0 0.0 0.05
+create_atoms 1 single 0.0 0.05 0.05
 set atom 1 type 1 shape ${Pr1} ${Pr2} ${Pl} blockiness ${blockiness1} ${blockiness2} density ${Pd} vz ${vin} quat ${c_orientation} ${angle} 
 
-create_atoms 1 single 0.0 0.0 0.15
-set atom 2 type 2 shape ${Pr1} ${Pr2} ${Pl} blockiness ${blockiness1} ${blockiness2} density ${Pd} vz -${vin}
+#create_atoms 1 single 0.0 -0.05 0.05
+#set atom 2 type 1 shape ${Pr1} ${Pr2} ${Pl} blockiness ${blockiness1} ${blockiness2} density ${Pd} vz ${vin} #quat ${c_orientation} ${angle} 
 
-						
 # Define the physics
 pair_style   gran model ${c_model}
 pair_coeff   * *
@@ -126,11 +134,18 @@ fix           ctg all check/timestep/gran 1 0.01 0.01
 run           1
 unfix         ctg
 
-fix my all collision/tracker 3000 file results*.csv
+# Our own fix
+fix my all collision/tracker 1000 raw data/data*.csv &
+                            cpoctant 10 10 10 &
+                            range full      octo/full_*.csv &
+                            range 3 100     octo/3_*.csv &
+                            range 1 100     octo/1_*.csv &
+                            range 0.5 100   octo/05_*.csv
 
 # Save simulation to be restarted
 restart       ${saveOutEvery} poly.restart poly.restart
 
+dump          dumpstl all stl ${writeOutEvery} post/stl*.stl
 dump          dmp all custom ${writeOutEvery} post/rigid*.dump &
               id type x y z quat1 quat2 quat3 quat4 vx vy vz fx fy fz blockiness1 blockiness2
 dump_modify   dmp label version_01

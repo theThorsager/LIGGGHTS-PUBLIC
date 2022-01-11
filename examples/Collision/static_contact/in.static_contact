@@ -1,5 +1,10 @@
 ### This simulation involves inserting two particles and collide one against the other
 
+# Two particles are positioned so one rests on the wall and the other rests on that particle
+# Only the inital contact should be registered as collision
+# Size and position of particles needs to be exact
+# Otherwise they start in insersecting position and get flung appart
+
 ## Define event times in seconds
 variable time_run       equal 0.30      # Run time for particles
 variable time_sample    equal 0.002	# Sample time during run images
