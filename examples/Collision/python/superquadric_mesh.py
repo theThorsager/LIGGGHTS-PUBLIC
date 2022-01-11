@@ -9,7 +9,7 @@ import sys
 import os
 import csv
 from typing import NamedTuple
-
+from enum import Enum
 
 class Superquadric(NamedTuple):
     a: float
@@ -25,11 +25,27 @@ class Spherecube(NamedTuple):
     yN: float
     zN: float
 
+class Area(Enum):
+    none = 'none'
+    norm = 'norm'
+    si = 'SI' # SI units
+
+    def __str__(self):
+        return self.value
+
 
 def get_args():
     parser = argparse.ArgumentParser(description='Create cube-spherical mesh')
     parser.add_argument('-f', '--file', dest='file', type=pathlib.Path,
-                        help='file path')
+                        required=True, help='file path')
+    # Frequency per particle per time per square-area
+    # If parameter is left out then default value is used instead
+    parser.add_argument('--particle-num', dest='part_num', type=int, default=1,
+                        help='Number of particles observed in simulation')
+    parser.add_argument('--time', dest='time', type=float, default=1,
+                        help='Duration of observation in simulation, measured in seconds')
+    parser.add_argument('--area', dest='area', type=Area, choices=list(Area), default=Area.none,
+                        help='How surface area is accounted for in frequency calculations')
 
     args = parser.parse_args()
 
@@ -98,7 +114,7 @@ def triangle_area(p1,p2,p3):
     return np.linalg.norm(area)/2
 
 
-def area_normalised(xMesh,yMesh,zMesh):
+def meshface_area(xMesh,yMesh,zMesh):
     N,M = np.shape(xMesh)
     w = []
     for i in range(N-1):
@@ -128,7 +144,7 @@ def plot_cell_data(mesh, scalars, name='none'):
     return mesh2
 
 
-def plot_grid_mayavi(superquadric, spherecube, xSide, ySide, zSide):
+def plot_grid_mayavi(superquadric, spherecube, xSide, ySide, zSide, arg_dict={}):
 
     a = superquadric.a
     b = superquadric.b
@@ -144,7 +160,7 @@ def plot_grid_mayavi(superquadric, spherecube, xSide, ySide, zSide):
     yN = spherecube.yN + 1 # For fence post problem
     zN = spherecube.zN + 1 # For fence post problem
 
-    fig = mlab.figure(fgcolor=(0, 0, 0), bgcolor=(1, 1, 1))
+    fig = mlab.figure('Collision frequency', fgcolor=(0, 0, 0), bgcolor=(1, 1, 1))
 
     ax_scale = [1.0, 1.0, 1.0] # Need to change later
     ax_ranges = [-2, 2, -2, 2, -2, 2]
@@ -167,7 +183,7 @@ def plot_grid_mayavi(superquadric, spherecube, xSide, ySide, zSide):
     # Negative x side
     x = -x
     x_neg = mlab.mesh(x, y, z, colormap='Blues')
-    x_area = area_normalised(x,y,z)
+    x_area = meshface_area(x,y,z)
 
     # Create meshgrid for side Y,-Y
     u = np.linspace(-a, a, xN)
@@ -183,7 +199,7 @@ def plot_grid_mayavi(superquadric, spherecube, xSide, ySide, zSide):
     # Negative x side
     y = -y
     y_neg = mlab.mesh(x, y, z, colormap='Blues')
-    y_area = area_normalised(x,y,z)
+    y_area = meshface_area(x,y,z)
 
     # Create meshgrid for side Z,-Z
     u = np.linspace(-a, a, xN)
@@ -199,12 +215,14 @@ def plot_grid_mayavi(superquadric, spherecube, xSide, ySide, zSide):
     # Negative x side
     z = -z
     z_neg = mlab.mesh(x, y, z, colormap='Blues')
-    z_area = area_normalised(x,y,z)
+    z_area = meshface_area(x,y,z)
 
 
     #area_normalisition = False
-    area_normalisition = True
-    if area_normalisition:
+    area_handling = arg_dict.get('area')
+    unit = None
+    if area_handling == Area.norm:
+        # Normalised in comparison to largest surface face
         max_area = np.max([np.max(x_area),np.max(y_area),np.max(z_area)])
         x_area = x_area/max_area
         y_area = y_area/max_area
@@ -215,10 +233,48 @@ def plot_grid_mayavi(superquadric, spherecube, xSide, ySide, zSide):
         z_w = prep_scalar_value(zSide/z_area)
 
         vmax = np.max([np.max(x_w),np.max(y_w),np.max(z_w)])
+
+    elif area_handling == Area.si: 
+        max_area = np.max([np.max(x_area),np.max(y_area),np.max(z_area)])
+        min_area = np.min([np.min(x_area),np.min(y_area),np.min(z_area)])
+        # Select appropriate prefix for surface area: mm^2, cm^2, m^2
+        
+        unit_coversion = 1
+        if min_area < 0.000001: # 0.000001 m^2 == 1 mm^2
+            unit_coversion = 1000000
+            unit = '$mm^2$'
+        elif min_area < 0.0001: # 0.0001 m^2 == 1 cm^2
+            unit_coversion = 10000
+            unit = '$cm^2$'
+        else: # Use m^2
+            unit_coversion = 1
+            unit = '$m^2$'
+
+        x_area = x_area*unit_coversion
+        y_area = y_area*unit_coversion
+        z_area = z_area*unit_coversion
+
+        x_w = prep_scalar_value(xSide/x_area)
+        y_w = prep_scalar_value(ySide/y_area)
+        z_w = prep_scalar_value(zSide/z_area)
+
+        vmax = np.max([np.max(x_w),np.max(y_w),np.max(z_w)])
+
     else:
         x_w = prep_scalar_value(xSide)
         y_w = prep_scalar_value(ySide)
         z_w = prep_scalar_value(zSide)
+
+
+    # Calculate frequency per particle per time
+    part_num = arg_dict.get('part_num',1)
+    time = arg_dict.get('time',1)
+    temp = part_num*time
+
+    x_w = x_w/temp
+    y_w = y_w/temp
+    z_w = z_w/temp
+    vmax = np.max([np.max(x_w),np.max(y_w),np.max(z_w)])
 
 
     # Plot heatmapped sides
@@ -237,11 +293,16 @@ def plot_grid_mayavi(superquadric, spherecube, xSide, ySide, zSide):
     mesh2 = plot_cell_data(z_neg, z_w, name='-Z Cell data')
     surf = mlab.pipeline.surface(mesh2, vmin=vmin, vmax=vmax)
 
+    if unit:
+        title = 'Collisions \nper {} \nper second\n'.format(unit)
+    else:
+        title = 'Collisions \nper second\n'
+
     #mlab.colorbar(title='Phase', orientation='vertical', nb_labels=3)
-    mlab.colorbar(object=surf, title='Frequency', orientation='vertical', nb_labels=5)
+    #mlab.colorbar(object=surf, title='Frequency', orientation='vertical', nb_labels=5)
+    mlab.colorbar(object=surf, title=title, orientation='vertical')
     #mlab.colorbar()
 
-    #mlab.view(.0, -5.0, 4)
     mlab.show()
 
 
@@ -412,10 +473,7 @@ if __name__ == "__main__":
     args = get_args()
     sc, sq, xSide, ySide, zSide = get_octant(args.file)
 
-    #sq = Superquadric(a=7,b=3.5,c=2.5,e1=2/4,e2=2/2,n1=4,n2=2)
-
-    #plot_superquadric_mayavi(sq,n=32)
-    plot_grid_mayavi(sq, sc, xSide, ySide, zSide)
+    plot_grid_mayavi(sq, sc, xSide, ySide, zSide, arg_dict=vars(args))
 
 
 '''
