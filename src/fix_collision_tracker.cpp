@@ -495,181 +495,179 @@ void FixCollisionTracker::post_force(int vflag)
 
   if (store_particle)
   {
-  PairGran *pg = pair_gran;
-  double ** first_contact_hist = pg->listgranhistory ? pg->listgranhistory->firstdouble : NULL;
-  int ** firstneigh = pg->list->firstneigh;
+    PairGran *pg = pair_gran;
+    double ** first_contact_hist = pg->listgranhistory ? pg->listgranhistory->firstdouble : NULL;
+    int ** firstneigh = pg->list->firstneigh;
 
-  int inum = pg->list->inum;
-  int * ilist = pg->list->ilist;
-  const int dnum = pg->dnum();
-  int * numneigh = pg->list->numneigh;
-  
-  SurfacesIntersectData sidata;
+    int inum = pg->list->inum;
+    int * ilist = pg->list->ilist;
+    const int dnum = pg->dnum();
+    int * numneigh = pg->list->numneigh;
+    
+    SurfacesIntersectData sidata;
 
-  // particle - particle
-  for (int ii = 0; ii < inum; ii++) {
-    const int i = ilist[ii];
-    sidata.i = i;
-  
-    double * const all_contact_hist = first_contact_hist ? first_contact_hist[i] : NULL;
+    // particle - particle
+    for (int ii = 0; ii < inum; ii++)
+    {
+      const int i = ilist[ii];
+      sidata.i = i;
+    
+      double * const all_contact_hist = first_contact_hist ? first_contact_hist[i] : NULL;
 
-    int * const jlist = firstneigh[i];
-    const int jnum = numneigh[i];
+      int * const jlist = firstneigh[i];
+      const int jnum = numneigh[i];
 
-    for (int jj = 0; jj < jnum; jj++) {
-      const int j = jlist[jj] & NEIGHMASK;
-      if (!(mask[j] & groupbit) && !(mask[i] & groupbit))
-        continue;
+      for (int jj = 0; jj < jnum; jj++) {
+        const int j = jlist[jj] & NEIGHMASK;
+        if (!(mask[j] & groupbit) && !(mask[i] & groupbit))
+          continue;
 
-      sidata.j = j;
+        sidata.j = j;
 
-      sidata.contact_history = all_contact_hist ? &all_contact_hist[dnum*jj] : NULL;
-     
-      if (check_collision(sidata))
-        resolve_contact_status(sidata);
+        sidata.contact_history = all_contact_hist ? &all_contact_hist[dnum*jj] : NULL;
+      
+        if (check_collision(sidata))
+          resolve_contact_status(sidata);
+      }
     }
-  }
   }
 
   if (store_wall)
   {
-  // particle - wall (only mesh and mesh walls, primitive walls are not included) 
-  // Based on public fork https://github.com/ParticulateFlow/LIGGGHTS-PFM (2021-12-26)
-  int nlocal = atom->nlocal;
-  int n_wall_fixes = modify->n_fixes_style("wall/gran");
-  for (int ifix = 0; ifix < n_wall_fixes; ++ifix)
-  {
-    FixWallGran *fwg = static_cast<FixWallGran*>(modify->find_fix_style("wall/gran",ifix));
-
-    if (fwg->is_mesh_wall())
+    // particle - wall (only mesh and mesh walls, primitive walls are not included) 
+    // Based on public fork https://github.com/ParticulateFlow/LIGGGHTS-PFM (2021-12-26)
+    int nlocal = atom->nlocal;
+    int n_wall_fixes = modify->n_fixes_style("wall/gran");
+    for (int ifix = 0; ifix < n_wall_fixes; ++ifix)
     {
-      int n_FixMesh = fwg->n_meshes();
-      for (int iMesh = 0; iMesh < n_FixMesh; iMesh++)
+      FixWallGran *fwg = static_cast<FixWallGran*>(modify->find_fix_style("wall/gran",ifix));
+
+      if (fwg->is_mesh_wall())
       {
-        TriMesh *mesh = fwg->mesh_list()[iMesh]->triMesh();
-        FixContactHistoryMesh *fix_contact = fwg->mesh_list()[iMesh]->contactHistory();
-        if (!fix_contact) continue; // Skip if null
-
-        // get neighborList and numNeigh
-        FixNeighlistMesh * meshNeighlist = fwg->mesh_list()[iMesh]->meshNeighlist();
-        if (!meshNeighlist) continue; // Skip if null
-
-        // Do things for moving wall here
-        double *** vMesh = NULL;
-        MultiVectorContainer<double,3,3> *vMeshC = mesh->prop().getElementProperty<MultiVectorContainer<double,3,3> >("v");
-        if(vMeshC)
-          vMesh = vMeshC->begin();
-
-        for (int iPart = 0; iPart < nlocal; ++iPart)
+        int n_FixMesh = fwg->n_meshes();
+        for (int iMesh = 0; iMesh < n_FixMesh; iMesh++)
         {
-          if (!(mask[iPart] & groupbit)) continue;
-          
-          const int nneighs = fix_contact->nneighs(iPart);
-          // Disregard any collisions if there has already been contact with this mesh at any triangle
-          bool prev_contact = 0;
-          if (permesh)
+          TriMesh *mesh = fwg->mesh_list()[iMesh]->triMesh();
+          FixContactHistoryMesh *fix_contact = fwg->mesh_list()[iMesh]->contactHistory();
+          if (!fix_contact) continue; // Skip if null
+
+          // get neighborList and numNeigh
+          FixNeighlistMesh * meshNeighlist = fwg->mesh_list()[iMesh]->meshNeighlist();
+          if (!meshNeighlist) continue; // Skip if null
+
+          // Do things for moving wall here
+          double *** vMesh = NULL;
+          MultiVectorContainer<double,3,3> *vMeshC = mesh->prop().getElementProperty<MultiVectorContainer<double,3,3> >("v");
+          if(vMeshC)
+            vMesh = vMeshC->begin();
+
+          for (int iPart = 0; iPart < nlocal; ++iPart)
           {
+            if (!(mask[iPart] & groupbit)) continue;
+            
+            const int nneighs = fix_contact->nneighs(iPart);
+            // Disregard any collisions if there has already been contact with this mesh at any triangle
+            bool prev_contact = 0;
+            if (permesh)
+            {
+              for (int j = 0; j < nneighs; ++j)
+              {
+                const int idTri = fix_contact->partner(iPart, j);
+                if (idTri != -1)
+                {
+                  double * contact_history = fix_contact->contacthistory(iPart, j);
+                  if (contact_history && contact_history[pre_particles_were_in_contact_offset] == 1)
+                  {
+                    prev_contact = 1;
+                    break;
+                  }
+                }
+              }
+            }
+
             for (int j = 0; j < nneighs; ++j)
             {
               const int idTri = fix_contact->partner(iPart, j);
               if (idTri != -1)
               {
                 double * contact_history = fix_contact->contacthistory(iPart, j);
-                if (contact_history && contact_history[pre_particles_were_in_contact_offset] == 1)
+
+                if (contact_history && contact_history[pre_particles_were_in_contact_offset] == 0)
                 {
-                  prev_contact = 1;
-                  break;
-                }
-              }
-            }
-          }
+                  int iTri = mesh->map(idTri, 0); // can it be something else than 0? the implication is that one idTri can have more than one iTri
+                  
+                  Superquadric particle(atom->x[iPart], atom->quaternion[iPart], atom->shape[iPart], atom->blockiness[iPart]);
+                  double delta[3], contact_point[3], bary[3];
+                  // Recalculating contact_point. It would be preferable to access already calculated values
+                  mesh->resolveTriSuperquadricContact(iTri, delta, contact_point, particle, bary);
 
-          for (int j = 0; j < nneighs; ++j)
-          {
-            const int idTri = fix_contact->partner(iPart, j);
-            if (idTri != -1)
-            {
-              double * contact_history = fix_contact->contacthistory(iPart, j);
+                  // Negative Baryocentric coordinates are outside of the triangle and not actual contact
+                  if(bary[0] >= 0 && bary[1] >= 0 && bary[2] >= 0 )
+                  {
+                    if (!prev_contact)
+                      resolve_mesh_contact_status(vMesh, iPart, iTri, bary,contact_point);
 
-              printf("timestep: %i, idTri in contact: %i \n", update->ntimestep, idTri);
-              if (contact_history && contact_history[pre_particles_were_in_contact_offset] == 0)
-              {
-                int iTri = mesh->map(idTri, 0); // can it be something else than 0? the implication is that one idTri can have more than one iTri
-                if (mesh->map_size(idTri) != 1)
-                  printf("Fuck!");
-                
-                Superquadric particle(atom->x[iPart], atom->quaternion[iPart], atom->shape[iPart], atom->blockiness[iPart]);
-                double delta[3], contact_point[3], bary[3];
-                // Recalculating contact_point. It would be preferable to access already calculated values
-                mesh->resolveTriSuperquadricContact(iTri, delta, contact_point, particle, bary);
-
-                // Negative Baryocentric coordinates are outside of the triangle and not actual contact
-                if(bary[0] >= 0 && bary[1] >= 0 && bary[2] >= 0 )
-                {
-                  if (!prev_contact)
-                    resolve_mesh_contact_status(vMesh, iPart, iTri, bary,contact_point);
-
-                  // contact_history is not used by wall - particle calculations, but it is zeroed out between contacts
-                  // We take advantage of that by setting pre_particles_were_in_contact_offset to 1
-                  contact_history[pre_particles_were_in_contact_offset] = 1;
-                  // Check against multiple collisions happening when particle slides across mesh wall is missing
-                  // Baryocentric coordinates may be used for that check
+                    // contact_history is not used by wall - particle calculations, but it is zeroed out between contacts
+                    // We take advantage of that by setting pre_particles_were_in_contact_offset to 1
+                    contact_history[pre_particles_were_in_contact_offset] = 1;
+                    // Check against multiple collisions happening when particle slides across mesh wall is missing
+                    // Baryocentric coordinates may be used for that check
+                  }
                 }
               }
             }
           }
         }
       }
-    }
-    else
-    {
-      if (fwg->dnum() > 0)
+      else
       {
-        char *hist_name = new char[strlen(fwg->id)+1+10];
-        strcpy(hist_name,"history_");
-        strcat(hist_name,fwg->id);
-        FixPropertyAtom *fix_history_primitive =
-                static_cast<FixPropertyAtom*>(modify->find_fix_property(hist_name,"property/atom","vector",fwg->dnum(),0,fwg->style));
-        delete []hist_name;
-        double ** wall_history = fix_history_primitive->array_atom;
-
-        int* neighbourList;
-        int nNeigh = fwg->primitiveWall()->getNeighbors(neighbourList);
-
-        for (int iCont = 0; iCont < nNeigh; ++iCont, ++neighbourList)
+        if (fwg->dnum() > 0)
         {
-          int iPart = *neighbourList;
-          if (!(mask[iPart] & groupbit) || !(mask[iPart] & fwg->groupbit)) continue;
+          char *hist_name = new char[strlen(fwg->id)+1+10];
+          strcpy(hist_name,"history_");
+          strcat(hist_name,fwg->id);
+          FixPropertyAtom *fix_history_primitive =
+                  static_cast<FixPropertyAtom*>(modify->find_fix_property(hist_name,"property/atom","vector",fwg->dnum(),0,fwg->style));
+          delete []hist_name;
+          double ** wall_history = fix_history_primitive->array_atom;
 
+          int* neighbourList;
+          int nNeigh = fwg->primitiveWall()->getNeighbors(neighbourList);
 
-          double * contact_history = wall_history[iPart];
-          if (contact_history && contact_history[pre_particles_were_in_contact_offset] == 0)
+          for (int iCont = 0; iCont < nNeigh; ++iCont, ++neighbourList)
           {
-            double delta[3];
-            double deltan = fwg->primitiveWall()->resolveContact(atom->x[iPart], vectorMax3D(atom->shape[iPart]), delta);
+            int iPart = *neighbourList;
+            if (!(mask[iPart] & groupbit) || !(mask[iPart] & fwg->groupbit)) continue;
 
-            if (deltan <= 0)
+
+            double * contact_history = wall_history[iPart];
+            if (contact_history && contact_history[pre_particles_were_in_contact_offset] == 0)
             {
-              double sphere_contact_point[3];
-              vectorAdd3D(atom->x[iPart], delta, sphere_contact_point);
-              double closestPoint[3], point_of_lowest_potential[3];
-              Superquadric particle(atom->x[iPart], atom->quaternion[iPart], atom->shape[iPart], atom->blockiness[iPart]);
-              bool intersectflag = particle.plane_intersection(delta, sphere_contact_point, closestPoint, point_of_lowest_potential);
-              
-              if (intersectflag)
+              double delta[3];
+              double deltan = fwg->primitiveWall()->resolveContact(atom->x[iPart], vectorMax3D(atom->shape[iPart]), delta);
+
+              if (deltan <= 0)
               {
-                resolve_primitive_contact_status(iPart, closestPoint);
-           
-                // Less than sure this isn't used...  
-                contact_history[pre_particles_were_in_contact_offset] = 1;
-                // But it is set to zero when the contact is lifted
+                double sphere_contact_point[3];
+                vectorAdd3D(atom->x[iPart], delta, sphere_contact_point);
+                double closestPoint[3], point_of_lowest_potential[3];
+                Superquadric particle(atom->x[iPart], atom->quaternion[iPart], atom->shape[iPart], atom->blockiness[iPart]);
+                bool intersectflag = particle.plane_intersection(delta, sphere_contact_point, closestPoint, point_of_lowest_potential);
+                
+                if (intersectflag)
+                {
+                  resolve_primitive_contact_status(iPart, closestPoint);
+            
+                  // Less than sure this isn't used...  
+                  contact_history[pre_particles_were_in_contact_offset] = 1;
+                  // But it is set to zero when the contact is lifted
+                }
               }
             }
           }
         }
       }
     }
-  }
   }
   // This is as weird as it looks, but LIGGGHTS want their array this way
   array_local[0] = rel_vels.data() + array_offset;
