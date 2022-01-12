@@ -97,6 +97,9 @@ class FixCollisionTracker : public Fix {
   int** y_octsurface_all;
   int** z_octsurface_all;
 
+  int n_meshes;
+  int **mesh_contact;
+
   bool permesh = 0;
   bool store_particle = 1;
   bool store_wall = 1;
@@ -132,6 +135,12 @@ class FixCollisionTracker : public Fix {
   void unit_cube_oct_projection(int iPart, double *contact, double *result);
   void unit_cube_oct_indexing(double *cube_projection, int i);
   void print_cube_projection(FILE *fp, int i);
+
+  double memory_usage();
+  void grow_arrays(int);
+  void copy_arrays(int, int, int);
+  int pack_exchange(int, double *);
+  int unpack_exchange(int, double *);
 };
 
 }

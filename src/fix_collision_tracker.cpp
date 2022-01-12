@@ -278,6 +278,36 @@ FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
         create_folder(octfilenames[i]);
   }
 #endif
+
+  n_meshes = 0;
+  int n_wall_fixes = modify->n_fixes_style("wall/gran");
+  for (int ifix = 0; ifix < n_wall_fixes; ++ifix)
+  {
+      FixWallGran *fwg = static_cast<FixWallGran*>(modify->find_fix_style("wall/gran",ifix));
+      if (fwg->is_mesh_wall())
+      {
+        int n_FixMesh = fwg->n_meshes();
+        n_meshes += n_FixMesh;
+      }
+  }
+
+  // perform initial allocation of atom-based array
+  // register with Atom class
+  mesh_contact = NULL;
+  grow_arrays(atom->nmax);
+  atom->add_callback(0);
+
+  int nlocal = atom->nlocal;
+
+  // setting no last mesh contact
+  for (int i = 0; i < nlocal; i++)
+  {
+    for(int k = 0; k < n_meshes; k++)
+    {
+      mesh_contact[i][k] = -1;
+    }
+  }
+
 }
 
 /* ---------------------------------------------------------------------- */
@@ -322,6 +352,13 @@ FixCollisionTracker::~FixCollisionTracker()
       memory->destroy(z_octsurface_all);
     }
   }
+
+  // unregister callbacks to this fix from Atom class
+  atom->delete_callback(id,0);
+
+  // delete locally stored array
+  memory->destroy(mesh_contact);
+
 }
 
 /* ---------------------------------------------------------------------- */
@@ -536,8 +573,10 @@ void FixCollisionTracker::post_force(int vflag)
   {
     // particle - wall (only mesh and mesh walls, primitive walls are not included) 
     // Based on public fork https://github.com/ParticulateFlow/LIGGGHTS-PFM (2021-12-26)
+    int mesh_number = 0;
     int nlocal = atom->nlocal;
     int n_wall_fixes = modify->n_fixes_style("wall/gran");
+    //printf("wall_coll n_wall_fixes:%d\n",n_wall_fixes);
     for (int ifix = 0; ifix < n_wall_fixes; ++ifix)
     {
       FixWallGran *fwg = static_cast<FixWallGran*>(modify->find_fix_style("wall/gran",ifix));
@@ -545,6 +584,7 @@ void FixCollisionTracker::post_force(int vflag)
       if (fwg->is_mesh_wall())
       {
         int n_FixMesh = fwg->n_meshes();
+        //printf("wall_coll n_FixMesh:%d\n",n_FixMesh);
         for (int iMesh = 0; iMesh < n_FixMesh; iMesh++)
         {
           TriMesh *mesh = fwg->mesh_list()[iMesh]->triMesh();
@@ -567,6 +607,7 @@ void FixCollisionTracker::post_force(int vflag)
             
             const int nneighs = fix_contact->nneighs(iPart);
             // Disregard any collisions if there has already been contact with this mesh at any triangle
+            /*
             bool prev_contact = 0;
             if (permesh)
             {
@@ -576,6 +617,7 @@ void FixCollisionTracker::post_force(int vflag)
                 if (idTri != -1)
                 {
                   double * contact_history = fix_contact->contacthistory(iPart, j);
+                  printf("idTri: %d \n", idTri);
                   if (contact_history && contact_history[pre_particles_were_in_contact_offset] == 1)
                   {
                     prev_contact = 1;
@@ -584,10 +626,20 @@ void FixCollisionTracker::post_force(int vflag)
                 }
               }
             }
+            */
+            bool prev_contact = 0;
+            bool current_contact = 0;
+            //printf("mesh_contact[%d][%d] = %d; timestep: %d\n",iPart,mesh_number,mesh_contact[iPart][mesh_number],update->ntimestep);
+            if (mesh_contact[iPart][mesh_number] == 1)
+            {
+              // Previous contact was had
+              prev_contact = 1;
+            }
 
             for (int j = 0; j < nneighs; ++j)
             {
               const int idTri = fix_contact->partner(iPart, j);
+              //printf("idTri: %d\n",idTri);
               if (idTri != -1)
               {
                 double * contact_history = fix_contact->contacthistory(iPart, j);
@@ -605,7 +657,12 @@ void FixCollisionTracker::post_force(int vflag)
                   if(bary[0] >= 0 && bary[1] >= 0 && bary[2] >= 0 )
                   {
                     if (!prev_contact)
-                      resolve_mesh_contact_status(vMesh, iPart, iTri, bary,contact_point);
+                    {
+                      resolve_mesh_contact_status(vMesh, iPart, iTri, bary, contact_point);
+                    }
+                    current_contact = 1;
+
+                    //printf("iPart: %d, iTri: %d; (%f,%f,%f); (%f,%f,%f)\n", iPart, iTri, contact_point[0],contact_point[1],contact_point[2],bary[0],bary[1],bary[2]);
 
                     // contact_history is not used by wall - particle calculations, but it is zeroed out between contacts
                     // We take advantage of that by setting pre_particles_were_in_contact_offset to 1
@@ -614,9 +671,24 @@ void FixCollisionTracker::post_force(int vflag)
                     // Baryocentric coordinates may be used for that check
                   }
                 }
+                else if (contact_history && contact_history[pre_particles_were_in_contact_offset] == 1)
+                {
+                  current_contact = 1;
+                }
               }
             }
+
+            if (current_contact)
+            {
+              mesh_contact[iPart][mesh_number] = 1;
+            }
+            else
+            {
+              mesh_contact[iPart][mesh_number] = 0;
+            }
           }
+          // changing to a different mesh
+          mesh_number++;
         }
       }
       else
@@ -996,3 +1068,75 @@ void FixCollisionTracker::print_atom_info(int i)
 }
 
 /* ---------------------------------------------------------------------- */
+
+
+/* ----------------------------------------------------------------------
+   Handling of local atom-based array. Based on other fixes
+------------------------------------------------------------------------- */
+
+/* ----------------------------------------------------------------------
+   memory usage of local atom-based array
+------------------------------------------------------------------------- */
+
+double FixCollisionTracker::memory_usage()
+{
+  double bytes = atom->nmax*n_meshes * sizeof(int);
+  return bytes;
+}
+
+/* ----------------------------------------------------------------------
+   allocate atom-based array
+------------------------------------------------------------------------- */
+
+void FixCollisionTracker::grow_arrays(int nmax)
+{
+  memory->grow(mesh_contact,nmax,n_meshes,"collision/tracker:mesh_contact");
+}
+
+/* ----------------------------------------------------------------------
+   copy values within local atom-based array
+------------------------------------------------------------------------- */
+
+void FixCollisionTracker::copy_arrays(int i, int j, int delflag)
+{
+  for(int k = 0; k < n_meshes; k++)
+  {
+    mesh_contact[j][k] = mesh_contact[i][k];
+  }
+  //mesh_contact[j][0] = mesh_contact[i][0];
+  //mesh_contact[j][1] = mesh_contact[i][1];
+}
+
+/* ----------------------------------------------------------------------
+   pack values in local atom-based array for exchange with another proc
+------------------------------------------------------------------------- */
+
+int FixCollisionTracker::pack_exchange(int i, double *buf)
+{
+  for(int k = 0; k < n_meshes; k++)
+  {
+    buf[k] = mesh_contact[i][k];
+  }
+  return n_meshes;
+
+  //buf[0] = mesh_contact[i][0];
+  //buf[1] = mesh_contact[i][1];
+  //return 2;
+}
+
+/* ----------------------------------------------------------------------
+   unpack values in local atom-based array from exchange with another proc
+------------------------------------------------------------------------- */
+
+int FixCollisionTracker::unpack_exchange(int nlocal, double *buf)
+{
+  for(int k = 0; k < n_meshes; k++)
+  {
+    mesh_contact[nlocal][k] = buf[k];
+  }
+  return n_meshes;
+
+  //mesh_contact[nlocal][0] = buf[0];
+  //mesh_contact[nlocal][1] = buf[1];
+  //return 2;
+}
