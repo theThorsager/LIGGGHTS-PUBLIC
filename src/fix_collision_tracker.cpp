@@ -148,6 +148,7 @@ FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
       }
       else if (iarg + 3 < narg)
       {
+        SetGroupShapeBlockiness();
         // x,y,z sides
         x_nsplit = atoi(arg[iarg+1]);
         if (x_nsplit < 1) error->all(FLERR,"x axis split < 1");
@@ -213,6 +214,10 @@ FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
         memory->create(x_octsurface_all, y_nsplit, z_nsplit, "xprojection_all");
         memory->create(y_octsurface_all, x_nsplit, z_nsplit, "yprojection_all");
         memory->create(z_octsurface_all, x_nsplit, y_nsplit, "zprojection_all");
+
+        memset(x_octsurface_all[0], 0, sizeof(**x_octsurface_all)*y_nsplit*z_nsplit);
+        memset(y_octsurface_all[0], 0, sizeof(**y_octsurface_all)*x_nsplit*z_nsplit);
+        memset(z_octsurface_all[0], 0, sizeof(**z_octsurface_all)*x_nsplit*y_nsplit);
       }
       else
       {
@@ -754,25 +759,23 @@ void FixCollisionTracker::SetGroupShapeBlockiness()
   double shapes[size*3];
   double blocks[size*2];
   
-  MPI_Gather(shp, 3, MPI_DOUBLE, shapes, 3, MPI_DOUBLE, 0, world);
-  MPI_Gather(blo, 2, MPI_DOUBLE, blocks, 2, MPI_DOUBLE, 0, world);
-  if (me == 0)
+  MPI_Allgather(shp, 3, MPI_DOUBLE, shapes, 3, MPI_DOUBLE, world);
+  MPI_Allgather(blo, 2, MPI_DOUBLE, blocks, 2, MPI_DOUBLE, world);
+
+  int j;
+  for (j = 0; j < size; ++j)
   {
-    int j;
-    for (j = 0; j < size; ++j)
+    if (shapes[j*3] > -1)
     {
-      if (shapes[j*3] > -1)
-      {
-        vectorCopyN(&shapes[j*3], shape, 3);
-        vectorCopyN(&blocks[j*2], blockiness, 2);
-        break;
-      }
+      vectorCopyN(&shapes[j*3], shape, 3);
+      vectorCopyN(&blocks[j*2], blockiness, 2);
+      break;
     }
-    if (j == size) // set some values to avoid issues if non are found
-    {
-      vectorCopyN(shapes, shape, 3);
-      vectorCopyN(blocks, blockiness, 2);
-    }
+  }
+  if (j == size) // set some values to avoid issues if non are found
+  {
+    vectorCopyN(shapes, shape, 3);
+    vectorCopyN(blocks, blockiness, 2);
   }
 }
 
