@@ -109,8 +109,8 @@ fix          mixer all wall/gran model ${c_model} mesh n_meshes 1 meshes cad1
 create_atoms 1 single 0.0 0.05 0.05
 set atom 1 type 1 shape ${Pr1} ${Pr2} ${Pl} blockiness ${blockiness1} ${blockiness2} density ${Pd} vz ${vin} quat ${c_orientation} ${angle} 
 
-#create_atoms 1 single 0.0 -0.05 0.05
-#set atom 2 type 1 shape ${Pr1} ${Pr2} ${Pl} blockiness ${blockiness1} ${blockiness2} density ${Pd} vz ${vin} #quat ${c_orientation} ${angle} 
+create_atoms 1 single 0.0 -0.05 0.05
+set atom 2 type 1 shape ${Pr1} ${Pr2} ${Pl} blockiness ${blockiness1} ${blockiness2} density ${Pd} vz ${vin} #quat ${c_orientation} ${angle} 
 
 # Define the physics
 pair_style   gran model ${c_model}
