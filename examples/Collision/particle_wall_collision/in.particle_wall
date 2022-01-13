@@ -1,5 +1,7 @@
 ### This simulation involves inserting two particles and collide one against the other
 
+# Particle is given velocity in z direction and collides with a mesh wall
+
 ## Define event times in seconds
 variable time_run       equal 0.10      # Run time for particles
 variable time_sample    equal 0.002	# Sample time during run images
@@ -71,7 +73,7 @@ communicate	single vel yes
 soft_particles yes
 
 # Processors lay out
-processors 1 1 1
+# processors 1 2 2
 
 # Declare domain
 region		reg block -0.15 0.15 -0.15 0.15 0.0 0.2 units box
@@ -101,11 +103,6 @@ fix          cad1 all mesh/surface file meshes/wall.stl type 1 curvature 1e-5
 
 # Use the imported mesh as granular wall
 fix          mixer all wall/gran model ${c_model} mesh n_meshes 1 meshes cad1
-
-
-# Our own fix
-# fix ID(number or name to identify fix) group-id style
-# fix colltracker all collision/tracker 1
 						
 # Particle insertion
 create_atoms 1 single 0.0 0.0 0.05
@@ -135,7 +132,12 @@ run           1
 unfix         ctg
 
 # Our own fix
-fix colltracker all collision/tracker 1000 file data/particle_wall*.txt
+fix my all collision/tracker 1000 raw data/data*.csv &
+                            cpoctant 10 10 10 &
+                            range full      octo/full_*.csv &
+                            range 3 100     octo/3_*.csv &
+                            range 1 100     octo/1_*.csv &
+                            range 0.5 100   octo/05_*.csv
 
 # Save simulation to be restarted
 restart       ${saveOutEvery} poly.restart poly.restart

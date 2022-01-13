@@ -1,7 +1,10 @@
 ### This simulation involves inserting two particles and collide one against the other
 
+# One particle is affected by gravity. It falls toward mesh wall
+# Purpose of this test is to observe collision until it reaches rest
+
 ## Define event times in seconds
-variable time_run       equal 0.10      # Run time for particles
+variable time_run       equal 0.50      # Run time for particles
 variable time_sample    equal 0.002	# Sample time during run images
 variable time_sample1   equal 0.002	# Sample time during run contacts
 variable time_save      equal 5		# Auto-save time
@@ -11,7 +14,6 @@ variable time_thermo    equal 1		# Atom and thermal reporting time
 variable vin            equal 2.0       # Collision velocity
 variable c_orientation string '1 0 0'   # Colliding particle orientation 
 variable angle          equal 30.0        # Angle
-
 
 ## Define particle and wall properties
 variable Pd           equal 1500     # Tablet density
@@ -70,7 +72,7 @@ newton		off
 communicate	single vel yes
 soft_particles yes
 
-# Processors lay out
+# Processors lay out # Layout is left out for simpler execution
 # processors 1 1 1
 
 # Declare domain
@@ -85,6 +87,9 @@ neigh_modify  delay 0
 
 ### Setup
 
+# Gravity, 
+fix           grav all gravity 9.81 vector 0.0 0.0 1.0
+
 # Material and interaction properties required
 # Material properties required for new pair styles
 fix 	m1 all property/global youngsModulus peratomtype ${Yw} ${Yp}
@@ -96,17 +101,17 @@ fix   m4 all property/global coefficientFriction peratomtypepair 2 &
  						${cf_ww} ${cf_pw} &
 						${cf_pw} ${cf_pp}
 
+# Import mesh from cad:
+fix          cad1 all mesh/surface file meshes/wall.stl type 1 curvature 1e-5
+
+# Use the imported mesh as granular wall
+fix          mixer all wall/gran model ${c_model} mesh n_meshes 1 meshes cad1
+						
 # Particle insertion
-create_atoms 1 single 0.0 0.0 0.05
+create_atoms 1 single 0.0 0.0 0.1
 set atom 1 type 1 shape ${Pr1} ${Pr2} ${Pl} blockiness ${blockiness1} ${blockiness2} density ${Pd}
 
-create_atoms 1 single 0.0 0.05 0.0
-set atom 2 type 1 shape ${Pr1} ${Pr2} ${Pl} blockiness ${blockiness1} ${blockiness2} density ${Pd}
 
-create_atoms 1 single 0.5 0.0 0.0
-set atom 3 type 1 shape ${Pr1} ${Pr2} ${Pl} blockiness ${blockiness1} ${blockiness2} density ${Pd}
-
-						
 # Define the physics
 pair_style   gran model ${c_model}
 pair_coeff   * *
@@ -129,9 +134,18 @@ fix           ctg all check/timestep/gran 1 0.01 0.01
 run           1
 unfix         ctg
 
+# Our own fix
+fix my all collision/tracker 1000 raw data/data*.csv &
+                            cpoctant 10 10 10 &
+                            range full      octo/full_*.csv &
+                            range 3 100     octo/3_*.csv &
+                            range 1 100     octo/1_*.csv &
+                            range 0.5 100   octo/05_*.csv
+
 # Save simulation to be restarted
 restart       ${saveOutEvery} poly.restart poly.restart
 
+dump          dumpstl all stl ${writeOutEvery} post/stl*.stl
 dump          dmp all custom ${writeOutEvery} post/rigid*.dump &
               id type x y z quat1 quat2 quat3 quat4 vx vy vz fx fy fz blockiness1 blockiness2
 dump_modify   dmp label version_01

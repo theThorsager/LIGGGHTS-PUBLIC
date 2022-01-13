@@ -1,7 +1,10 @@
 ### This simulation involves inserting two particles and collide one against the other
 
+# Static contact test is performed alongside particle wall collision
+# This is to test multi-processor execution and that the two test don't affect each other
+
 ## Define event times in seconds
-variable time_run       equal 0.10      # Run time for particles
+variable time_run       equal 0.30      # Run time for particles
 variable time_sample    equal 0.002	# Sample time during run images
 variable time_sample1   equal 0.002	# Sample time during run contacts
 variable time_save      equal 5		# Auto-save time
@@ -11,7 +14,6 @@ variable time_thermo    equal 1		# Atom and thermal reporting time
 variable vin            equal 2.0       # Collision velocity
 variable c_orientation string '1 0 0'   # Colliding particle orientation 
 variable angle          equal 30.0        # Angle
-
 
 ## Define particle and wall properties
 variable Pd           equal 1500     # Tablet density
@@ -71,7 +73,7 @@ communicate	single vel yes
 soft_particles yes
 
 # Processors lay out
-processors 1 1 1
+processors 1 2 2
 
 # Declare domain
 region		reg block -0.15 0.15 -0.15 0.15 0.0 0.2 units box
@@ -85,6 +87,10 @@ neigh_modify  delay 0
 
 ### Setup
 
+# Gravity, 
+#fix           grav all gravity 9.81 vector 0.0 -1.0 0.0
+fix           grav all gravity 9.81 vector 0.0 0.0 1.0
+
 # Material and interaction properties required
 # Material properties required for new pair styles
 fix 	m1 all property/global youngsModulus peratomtype ${Yw} ${Yp}
@@ -96,14 +102,23 @@ fix   m4 all property/global coefficientFriction peratomtypepair 2 &
  						${cf_ww} ${cf_pw} &
 						${cf_pw} ${cf_pp}
 
-# Particle insertion
-create_atoms 1 single 0.0 0.0 0.05
-set atom 1 type 1 shape ${Pr1} ${Pr2} ${Pl} blockiness ${blockiness1} ${blockiness2} density ${Pd} vz ${vin} #quat ${c_orientation} ${angle} 
+# Import mesh from cad:
+fix          cad1 all mesh/surface file meshes/wall.stl type 1 curvature 1e-5
 
-create_atoms 1 single 0.0 0.0 0.15
-set atom 2 type 2 shape ${Pr1} ${Pr2} ${Pl} blockiness ${blockiness1} ${blockiness2} density ${Pd} vz -${vin}
-
+# Use the imported mesh as granular wall
+fix          mixer all wall/gran model ${c_model} mesh n_meshes 1 meshes cad1
 						
+# Static particle insertion
+create_atoms 1 single 0.0 -0.1 0.143284
+set atom 1 type 1 shape ${Pr1} ${Pr2} ${Pl} blockiness ${blockiness1} ${blockiness2} density ${Pd}
+
+create_atoms 1 single 0.0 -0.1 0.147769
+set atom 2 type 1 shape ${Pr1} ${Pr2} ${Pl} blockiness ${blockiness1} ${blockiness2} density ${Pd}
+
+# Moving particle insertion
+create_atoms 1 single 0.0 0.1 0.05
+set atom 3 type 1 shape ${Pr1} ${Pr2} ${Pl} blockiness ${blockiness1} ${blockiness2} density ${Pd} vz ${vin} quat ${c_orientation} ${angle} 
+	
 # Define the physics
 pair_style   gran model ${c_model}
 pair_coeff   * *
@@ -126,13 +141,20 @@ fix           ctg all check/timestep/gran 1 0.01 0.01
 run           1
 unfix         ctg
 
-fix my all collision/tracker 3000 file results*.csv
+fix my all collision/tracker 1000 raw data/data*.csv &
+                            cpoctant 10 10 10 &
+                            range full      octo/full_*.csv &
+                            range 3 100     octo/3_*.csv &
+                            range 1 100     octo/1_*.csv &
+                            range 0.5 100   octo/05_*.csv
 
 # Save simulation to be restarted
 restart       ${saveOutEvery} poly.restart poly.restart
 
+dump          dumpstl all stl ${writeOutEvery} post/stl*.stl
 dump          dmp all custom ${writeOutEvery} post/rigid*.dump &
               id type x y z quat1 quat2 quat3 quat4 vx vy vz fx fy fz blockiness1 blockiness2
 dump_modify   dmp label version_01
 
 run		${nStepsRun} upto
+create_atoms 1 single 0.0 0.0 0.05

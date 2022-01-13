@@ -32,11 +32,8 @@
 
 -------------------------------------------------------------------------
     Contributing author and copyright for this file:
-    (if not contributing author is listed, this file has been contributed
-    by the core developer)
-
-    Copyright 2012-     DCS Computing GmbH, Linz
-    Copyright 2009-2012 JKU Linz
+    Kalle Thorsager
+    Saevar Oli Valdimarsson
 ------------------------------------------------------------------------- */
 
 #include <string.h>
@@ -52,11 +49,9 @@
 #include "fix_collision_tracker.h"
 #include "pair_gran.h"
 #include "force.h"
-
+#include "group.h"
 #include "neigh_list.h"
-
 #include "contact_interface.h"
-
 #include <unordered_map>
 
 #include "fix.h"
@@ -125,21 +120,23 @@ FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
         rawname = new char[n];
         strcpy(rawname,arg[iarg+1]);
       }
+      SetGroupShapeBlockiness();
       writeraw = 1;
       iarg += 2;
     }
     else if(strcmp(arg[iarg],"cpoctant") == 0)
     {
-      if (iarg+1 > narg) error->all(FLERR,"Illegal fix cpoctant command");
+      if (iarg+2 > narg) error->all(FLERR,"Illegal fix cpoctant command");
 
       cube_projection = 1;
 
-      if (iarg+2 > narg || atoi(arg[iarg+2]) == 0) // single number
+      if (iarg+3 > narg || atoi(arg[iarg+2]) == 0) // single number
       {
         int N = atoi(arg[iarg+1]);
         if (N < 1) error->all(FLERR, "number of buckets N is less than 1");
-       
-        double* shape = atom->shape[0];
+      
+        SetGroupShapeBlockiness();
+        //double* shape = atom->shape[0];
         double factor = shape[1] + shape[2] + shape[1]*shape[2]/shape[0];
         x_nsplit = (int) sqrt(N * shape[0] / factor);
         x_nsplit = x_nsplit < 1 ? 1 : x_nsplit;
@@ -221,7 +218,37 @@ FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
       {
         x_octsurface_all = y_octsurface_all = z_octsurface_all = x_octsurface[0];  // so that they can acess a first index for the MPI buiss
       }
-      iarg += 4;
+    }
+    else if(strcmp(arg[iarg],"type") == 0)
+    {
+      if (iarg+2 > narg) error->all(FLERR,"Illegal fix collision tracker: type command");
+      
+      if(strcmp(arg[iarg+1],"wall") == 0) {
+        store_particle = 0; 
+        store_wall = 1; 
+      }
+      if(strcmp(arg[iarg+1],"particle") == 0) {
+        store_particle = 1; 
+        store_wall = 0; 
+      }
+      if(strcmp(arg[iarg+1],"permesh") == 0) {
+        permesh = 1;
+      }
+      else
+        error->all(FLERR,"Illegal fix collision tracker: type command");
+      
+      iarg += 2;
+    }
+    else if (strcmp(arg[iarg], "othergroup") == 0)
+    {
+      if (iarg+2 > narg) error->all(FLERR,"Illegal fix collision tracker: othergroup command");
+
+      int igroup = group->find(arg[iarg+1]);
+      if (igroup == -1) error->all(FLERR,"Could not find fixcollisiontrackers othergroup fix group ID");
+      othergroupbit = group->bitmask[igroup];
+      useothergroup = 1;
+
+      iarg += 2;
     }
     else
       iarg+=1;
@@ -245,6 +272,40 @@ FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
         create_folder(octfilenames[i]);
   }
 #endif
+
+  n_meshes = 0;
+  int n_wall_fixes = modify->n_fixes_style("wall/gran");
+  for (int ifix = 0; ifix < n_wall_fixes; ++ifix)
+  {
+      FixWallGran *fwg = static_cast<FixWallGran*>(modify->find_fix_style("wall/gran",ifix));
+      if (fwg->is_mesh_wall())
+      {
+        int n_FixMesh = fwg->n_meshes();
+        n_meshes += n_FixMesh;
+      }
+  }
+
+  // perform initial allocation of atom-based array
+  // register with Atom class
+  mesh_contact = NULL;
+
+  if(permesh)
+  {
+    grow_arrays(atom->nmax);
+    atom->add_callback(0); // Callback only enabled if permesh is used
+
+    int nlocal = atom->nlocal;
+
+    // setting no last mesh contact
+    for (int i = 0; i < nlocal; i++)
+    {
+      for(int k = 0; k < n_meshes; k++)
+      {
+        mesh_contact[i][k] = -1;
+      }
+    }
+  }
+
 }
 
 /* ---------------------------------------------------------------------- */
@@ -288,6 +349,15 @@ FixCollisionTracker::~FixCollisionTracker()
       memory->destroy(y_octsurface_all);
       memory->destroy(z_octsurface_all);
     }
+  }
+
+  if (permesh)
+  {
+    // unregister callbacks to this fix from Atom class
+    atom->delete_callback(id,0);
+
+    // delete locally stored array
+    memory->destroy(mesh_contact);
   }
 }
 
@@ -357,9 +427,6 @@ void FixCollisionTracker::end_of_step()
     MPI_Gatherv(col, n*3, MPI_DOUBLE, col_all, cns, dcns, MPI_DOUBLE, 0, world);
 
     if (me == 0){
-      // Assuming all atoms have same shape
-      double* shape = atom->shape[0];
-      double* blockiness = atom->blockiness[0];
       fprintf(fp, "# %f %f %f %f %f\n", shape[0], shape[1], shape[2], blockiness[0], blockiness[1]);
 
       for (int i = 0; i < n_all; ++i)
@@ -410,10 +477,6 @@ void FixCollisionTracker::print_cube_projection(FILE *fp, int i)
   if (me != 0)
     return;
 
-  // Assuming all atoms have same shape
-  double* shape = atom->shape[0];
-  double* blockiness = atom->blockiness[0];
-
   fprintf(fp,"%f, %f, %f, %f, %f\n", shape[0], shape[1], shape[2], blockiness[0], blockiness[1]);
   fprintf(fp,"%d, %d, %d\n", x_nsplit, y_nsplit, z_nsplit);
   // Print x side
@@ -454,7 +517,8 @@ void FixCollisionTracker::print_cube_projection(FILE *fp, int i)
 
 void FixCollisionTracker::post_force(int vflag)
 {
-  if ((update->ntimestep - 1) % nevery == 0)
+  // clear the buffers every time if it only needs to be avavibel for other fixes, or after every time we write out
+  if (!writeraw || (update->ntimestep - 1) % nevery == 0)
   {
     array_offset = 0;
     rel_vels.clear();
@@ -463,104 +527,186 @@ void FixCollisionTracker::post_force(int vflag)
   // Get local atom information
   int *mask = atom->mask;
 
-  PairGran *pg = pair_gran;
-  double ** first_contact_hist = pg->listgranhistory ? pg->listgranhistory->firstdouble : NULL;
-  int ** firstneigh = pg->list->firstneigh;
+  if (store_particle)
+  {
+    PairGran *pg = pair_gran;
+    double ** first_contact_hist = pg->listgranhistory ? pg->listgranhistory->firstdouble : NULL;
+    int ** firstneigh = pg->list->firstneigh;
 
-  int inum = pg->list->inum;
-  int * ilist = pg->list->ilist;
-  const int dnum = pg->dnum();
-  int * numneigh = pg->list->numneigh;
-  
-  SurfacesIntersectData sidata;
+    int inum = pg->list->inum;
+    int * ilist = pg->list->ilist;
+    const int dnum = pg->dnum();
+    int * numneigh = pg->list->numneigh;
+    
+    SurfacesIntersectData sidata;
 
-  // particle - particle
-  for (int ii = 0; ii < inum; ii++) {
-    const int i = ilist[ii];
-    if (!(mask[i] & groupbit))
-      continue;
+    // particle - particle
+    for (int ii = 0; ii < inum; ii++)
+    {
+      const int i = ilist[ii];
+      sidata.i = i;
+    
+      double * const all_contact_hist = first_contact_hist ? first_contact_hist[i] : NULL;
 
-    sidata.i = i;
-  
-    double * const all_contact_hist = first_contact_hist ? first_contact_hist[i] : NULL;
+      int * const jlist = firstneigh[i];
+      const int jnum = numneigh[i];
 
-    int * const jlist = firstneigh[i];
-    const int jnum = numneigh[i];
+      for (int jj = 0; jj < jnum; jj++) {
+        const int j = jlist[jj] & NEIGHMASK;
+        if (!(mask[j] & groupbit) && !(mask[i] & groupbit))
+          continue;
 
-    for (int jj = 0; jj < jnum; jj++) {
-      const int j = jlist[jj] & NEIGHMASK;
-      if (!(mask[j] & groupbit))
-        continue;
+        sidata.j = j;
 
-      sidata.j = j;
-
-      sidata.contact_history = all_contact_hist ? &all_contact_hist[dnum*jj] : NULL;
-     
-      if (check_collision(sidata))
-        resolve_contact_status(sidata);
+        sidata.contact_history = all_contact_hist ? &all_contact_hist[dnum*jj] : NULL;
+      
+        if (check_collision(sidata))
+          resolve_contact_status(sidata);
+      }
     }
   }
 
-  // particle - wall (only mesh and mesh walls, primitive walls are not included) 
-  // Based on public fork https://github.com/ParticulateFlow/LIGGGHTS-PFM (2021-12-26)
-  int nlocal = atom->nlocal;
-  int n_wall_fixes = modify->n_fixes_style("wall/gran");
-  for (int ifix = 0; ifix < n_wall_fixes; ++ifix)
+  if (store_wall)
   {
-    FixWallGran *fwg = static_cast<FixWallGran*>(modify->find_fix_style("wall/gran",ifix));
+    // particle - wall (only mesh and mesh walls, primitive walls are not included) 
+    // Based on public fork https://github.com/ParticulateFlow/LIGGGHTS-PFM (2021-12-26)
+    int mesh_number = 0;
+    int nlocal = atom->nlocal;
+    int n_wall_fixes = modify->n_fixes_style("wall/gran");
 
-    if (fwg->is_mesh_wall())
+    for (int ifix = 0; ifix < n_wall_fixes; ++ifix)
     {
-      int n_FixMesh = fwg->n_meshes();
-      for (int iMesh = 0; iMesh < n_FixMesh; iMesh++)
+      FixWallGran *fwg = static_cast<FixWallGran*>(modify->find_fix_style("wall/gran",ifix));
+
+      if (fwg->is_mesh_wall())
       {
-        TriMesh *mesh = fwg->mesh_list()[iMesh]->triMesh();
-        int nTriAll = mesh->sizeLocal() + mesh->sizeGhost();
-        FixContactHistoryMesh *fix_contact = fwg->mesh_list()[iMesh]->contactHistory();
-        if (!fix_contact) continue; // Skip if null
-
-        // get neighborList and numNeigh
-        FixNeighlistMesh * meshNeighlist = fwg->mesh_list()[iMesh]->meshNeighlist();
-        if (!meshNeighlist) continue; // Skip if null
-
-        // Do things for moving wall here
-        double *** vMesh = NULL;
-        MultiVectorContainer<double,3,3> *vMeshC = mesh->prop().getElementProperty<MultiVectorContainer<double,3,3> >("v");
-        if(vMeshC)
-          vMesh = vMeshC->begin();
-
-        for (int iTri = 0; iTri < nTriAll; iTri++)
+        int n_FixMesh = fwg->n_meshes();
+        //printf("wall_coll n_FixMesh:%d\n",n_FixMesh);
+        for (int iMesh = 0; iMesh < n_FixMesh; iMesh++)
         {
-          const std::vector<int> & neighborList = meshNeighlist->get_contact_list(iTri);
-          const int numneigh = neighborList.size();
+          TriMesh *mesh = fwg->mesh_list()[iMesh]->triMesh();
+          FixContactHistoryMesh *fix_contact = fwg->mesh_list()[iMesh]->contactHistory();
+          if (!fix_contact) continue; // Skip if null
 
-          for (int iCont = 0; iCont < numneigh; iCont++) {
+          // get neighborList and numNeigh
+          FixNeighlistMesh * meshNeighlist = fwg->mesh_list()[iMesh]->meshNeighlist();
+          if (!meshNeighlist) continue; // Skip if null
 
-            const int iPart = neighborList[iCont];
+          // Do things for moving wall here
+          double *** vMesh = NULL;
+          MultiVectorContainer<double,3,3> *vMeshC = mesh->prop().getElementProperty<MultiVectorContainer<double,3,3> >("v");
+          if(vMeshC)
+            vMesh = vMeshC->begin();
 
-            // do not need to handle ghost particles
-            if (iPart >= nlocal) continue;
+          for (int iPart = 0; iPart < nlocal; ++iPart)
+          {
+            if (!(mask[iPart] & groupbit)) continue;
+            
+            const int nneighs = fix_contact->nneighs(iPart);
+            // Disregard any collisions if there has already been contact with this mesh at any triangle
+
+            bool prev_contact = 0;
+            bool current_contact = 0;
+            if (permesh)
+            {
+              if (mesh_contact[iPart][mesh_number] == 1)
+              {
+                // Previous contact was had
+                prev_contact = 1;
+              }
+            }
+
+            for (int j = 0; j < nneighs; ++j)
+            {
+              const int idTri = fix_contact->partner(iPart, j);
+              //printf("idTri: %d\n",idTri);
+              if (idTri != -1)
+              {
+                double * contact_history = fix_contact->contacthistory(iPart, j);
+
+                if (contact_history && contact_history[pre_particles_were_in_contact_offset] == 0)
+                {
+                  int iTri = mesh->map(idTri, 0); // can it be something else than 0? the implication is that one idTri can have more than one iTri
+                  
+                  Superquadric particle(atom->x[iPart], atom->quaternion[iPart], atom->shape[iPart], atom->blockiness[iPart]);
+                  double delta[3], contact_point[3], bary[3];
+                  // Recalculating contact_point. It would be preferable to access already calculated values
+                  mesh->resolveTriSuperquadricContact(iTri, delta, contact_point, particle, bary);
+
+                  // Negative Baryocentric coordinates are outside of the triangle and not actual contact
+                  if(bary[0] >= 0 && bary[1] >= 0 && bary[2] >= 0 )
+                  {
+                    if (!prev_contact)
+                    {
+                      resolve_mesh_contact_status(vMesh, iPart, iTri, bary, contact_point);
+                    }
+                    current_contact = 1;
+
+                    // contact_history is not used by wall - particle calculations, but it is zeroed out between contacts
+                    // We take advantage of that by setting pre_particles_were_in_contact_offset to 1
+                    contact_history[pre_particles_were_in_contact_offset] = 1;
+                  }
+                }
+                else if (contact_history && contact_history[pre_particles_were_in_contact_offset] == 1)
+                {
+                  // Particle is in contact according to contact history
+                  current_contact = 1;
+                }
+              }
+            }
+            if (permesh)
+            {
+              // set mesh_contact based on current contact status
+              mesh_contact[iPart][mesh_number] = current_contact;
+            }
+          }
+          // changing to a different mesh
+          mesh_number++;
+        }
+      }
+      else
+      {
+        if (fwg->dnum() > 0)
+        {
+          char *hist_name = new char[strlen(fwg->id)+1+10];
+          strcpy(hist_name,"history_");
+          strcat(hist_name,fwg->id);
+          FixPropertyAtom *fix_history_primitive =
+                  static_cast<FixPropertyAtom*>(modify->find_fix_property(hist_name,"property/atom","vector",fwg->dnum(),0,fwg->style));
+          delete []hist_name;
+          double ** wall_history = fix_history_primitive->array_atom;
+
+          int* neighbourList;
+          int nNeigh = fwg->primitiveWall()->getNeighbors(neighbourList);
+
+          for (int iCont = 0; iCont < nNeigh; ++iCont, ++neighbourList)
+          {
+            int iPart = *neighbourList;
             if (!(mask[iPart] & groupbit) || !(mask[iPart] & fwg->groupbit)) continue;
 
-            double *contact_history = get_triangle_contact_history(mesh, fix_contact, iPart, iTri);
 
+            double * contact_history = wall_history[iPart];
             if (contact_history && contact_history[pre_particles_were_in_contact_offset] == 0)
             {
-              Superquadric particle(atom->x[iPart], atom->quaternion[iPart], atom->shape[iPart], atom->blockiness[iPart]);
-              double delta[3], contact_point[3], bary[3];
-              // Recalculating contact_point. It would be preferable to access already calculated values
-              mesh->resolveTriSuperquadricContact(iTri, delta, contact_point, particle, bary);
+              double delta[3];
+              double deltan = fwg->primitiveWall()->resolveContact(atom->x[iPart], vectorMax3D(atom->shape[iPart]), delta);
 
-              // Negative Baryocentric coordinates are outside of the triangle and not actual contact
-              if(bary[0] >= 0 && bary[1] >= 0 && bary[2] >= 0 )
+              if (deltan <= 0)
               {
-                resolve_mesh_contact_status(vMesh, iPart, iTri, bary,contact_point);
-
-                // contact_history is not used by wall - particle calculations, but it is zeroed out between contacts
-                // We take advantage of that by setting pre_particles_were_in_contact_offset to 1
-                contact_history[pre_particles_were_in_contact_offset] = 1;
-                // Check against multiple collisions happening when particle slides across mesh wall is missing
-                // Baryocentric coordinates may be used for that check
+                double sphere_contact_point[3];
+                vectorAdd3D(atom->x[iPart], delta, sphere_contact_point);
+                double closestPoint[3], point_of_lowest_potential[3];
+                Superquadric particle(atom->x[iPart], atom->quaternion[iPart], atom->shape[iPart], atom->blockiness[iPart]);
+                bool intersectflag = particle.plane_intersection(delta, sphere_contact_point, closestPoint, point_of_lowest_potential);
+                
+                if (intersectflag)
+                {
+                  resolve_primitive_contact_status(iPart, closestPoint);
+            
+                  // Less than sure this isn't used...  
+                  contact_history[pre_particles_were_in_contact_offset] = 1;
+                  // But it is set to zero when the contact is lifted
+                }
               }
             }
           }
@@ -568,7 +714,6 @@ void FixCollisionTracker::post_force(int vflag)
       }
     }
   }
-
   // This is as weird as it looks, but LIGGGHTS want their array this way
   array_local[0] = rel_vels.data() + array_offset;
   size_local_rows = (rel_vels.size() - array_offset) / 2;
@@ -577,19 +722,58 @@ void FixCollisionTracker::post_force(int vflag)
 
 /* ---------------------------------------------------------------------- */
 
-double* FixCollisionTracker::get_triangle_contact_history(TriMesh *mesh, FixContactHistoryMesh *fix_contact, int iPart, int iTri)
+void FixCollisionTracker::SetGroupShapeBlockiness()
 {
-  // get contact history of particle iPart and triangle idTri
-  int idTri = mesh->id(iTri);
-  const int nneighs = fix_contact->nneighs(iPart);
-  for (int j = 0; j < nneighs; ++j)
+  // All particles in the same group are assumed to have the same shape
+  // This is for printing reasons, does not affect # of collisions
+  int nlocal = atom->nlocal;
+  int *mask = atom->mask;
+  int i;
+  for (i = 0; i < nlocal; ++i)
+    if (mask[i] & groupbit)
+      break;
+  
+  bool found = 1;
+  if (i == nlocal) // no instance of group on this processor
   {
-    if (fix_contact->partner(iPart, j) == idTri)
+    i = 0;
+    found = 0;
+  }
+
+  double shp[3] = {-10.0,-10.0,-10.0};
+  double blo[2] = {0.0,0.0};
+  if (found)
+  {
+    vectorCopyN(atom->shape[i], shp, 3);
+    vectorCopyN(atom->blockiness[i], blo, 2);
+  } 
+
+  int size = 0;
+  MPI_Comm_size(world, &size);
+
+  double shapes[size*3];
+  double blocks[size*2];
+  
+  MPI_Gather(shp, 3, MPI_DOUBLE, shapes, 3, MPI_DOUBLE, 0, world);
+  MPI_Gather(blo, 2, MPI_DOUBLE, blocks, 2, MPI_DOUBLE, 0, world);
+  if (me == 0)
+  {
+    int j;
+    for (j = 0; j < size; ++j)
     {
-      return fix_contact->contacthistory(iPart, j);
+      if (shapes[j*3] > -1)
+      {
+        vectorCopyN(&shapes[j*3], shape, 3);
+        vectorCopyN(&blocks[j*2], blockiness, 2);
+        break;
+      }
+    }
+    if (j == size) // set some values to avoid issues if non are found
+    {
+      vectorCopyN(shapes, shape, 3);
+      vectorCopyN(blocks, blockiness, 2);
     }
   }
-  return NULL;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -632,6 +816,32 @@ void FixCollisionTracker::store_data(int iPart, double velnormal, double veltang
 
 /* ---------------------------------------------------------------------- */
 
+void FixCollisionTracker::resolve_primitive_contact_status(int iPart, double* contact_point)
+{
+  double normal[3];
+  compute_normal_wall(iPart, contact_point, normal);
+
+  // v1 = v + cross(w,(p-x))  speed particle
+  double a_i[3];
+  double b_i[3];
+  vectorSubtract3D(contact_point, atom->x[iPart], a_i);
+  vectorCross3D(atom->omega[iPart], a_i, b_i);
+  vectorAdd3D(atom->v[iPart], b_i, a_i);
+
+
+  double res = vectorDot3D(a_i, normal);
+
+  double velnormal = res > 0 ? res : -res;
+  double veltangent = sqrt(vectorDot3D(a_i, a_i) - res * res);
+
+  double iLocal[3], iResult[3];
+  vectorSubtract3D(contact_point, atom->x[iPart], iLocal);
+  MathExtraLiggghtsNonspherical::rotate_global2local(atom->quaternion[iPart], iLocal, iResult);
+  store_data(iPart, velnormal, veltangent, iResult);
+}
+
+/* ---------------------------------------------------------------------- */
+
 void FixCollisionTracker::resolve_contact_status(SurfacesIntersectData& sidata)
 {
   bool jislocal = sidata.j < atom->nlocal;
@@ -643,8 +853,12 @@ void FixCollisionTracker::resolve_contact_status(SurfacesIntersectData& sidata)
   double point_of_contact[6];
   compute_local_contact(sidata, point_of_contact, point_of_contact+3);
 
-  store_data(sidata.i, vels[0], vels[1], point_of_contact);
-  if (jislocal)
+  // Get local atom information
+  int *mask = atom->mask;
+
+  if ((mask[sidata.i] & groupbit) && (!useothergroup || mask[sidata.j] & othergroupbit))
+    store_data(sidata.i, vels[0], vels[1], point_of_contact);
+  if (jislocal && (mask[sidata.j] & groupbit) && (!useothergroup || mask[sidata.i] & othergroupbit))
     store_data(sidata.j, vels[0], vels[1], point_of_contact+3);
 } 
 
@@ -827,3 +1041,65 @@ void FixCollisionTracker::print_atom_info(int i)
 }
 
 /* ---------------------------------------------------------------------- */
+
+
+/* ----------------------------------------------------------------------
+   Handling of local atom-based array. Based on other fixes
+------------------------------------------------------------------------- */
+
+/* ----------------------------------------------------------------------
+   memory usage of local atom-based array
+------------------------------------------------------------------------- */
+
+double FixCollisionTracker::memory_usage()
+{
+  double bytes = atom->nmax*n_meshes * sizeof(int);
+  return bytes;
+}
+
+/* ----------------------------------------------------------------------
+   allocate atom-based array
+------------------------------------------------------------------------- */
+
+void FixCollisionTracker::grow_arrays(int nmax)
+{
+  memory->grow(mesh_contact,nmax,n_meshes,"collision/tracker:mesh_contact");
+}
+
+/* ----------------------------------------------------------------------
+   copy values within local atom-based array
+------------------------------------------------------------------------- */
+
+void FixCollisionTracker::copy_arrays(int i, int j, int delflag)
+{
+  for(int k = 0; k < n_meshes; k++)
+  {
+    mesh_contact[j][k] = mesh_contact[i][k];
+  }
+}
+
+/* ----------------------------------------------------------------------
+   pack values in local atom-based array for exchange with another proc
+------------------------------------------------------------------------- */
+
+int FixCollisionTracker::pack_exchange(int i, double *buf)
+{
+  for(int k = 0; k < n_meshes; k++)
+  {
+    buf[k] = mesh_contact[i][k];
+  }
+  return n_meshes;
+}
+
+/* ----------------------------------------------------------------------
+   unpack values in local atom-based array from exchange with another proc
+------------------------------------------------------------------------- */
+
+int FixCollisionTracker::unpack_exchange(int nlocal, double *buf)
+{
+  for(int k = 0; k < n_meshes; k++)
+  {
+    mesh_contact[nlocal][k] = buf[k];
+  }
+  return n_meshes;
+}

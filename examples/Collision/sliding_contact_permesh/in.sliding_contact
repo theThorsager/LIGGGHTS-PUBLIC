@@ -1,5 +1,8 @@
 ### This simulation involves inserting two particles and collide one against the other
 
+# A single particle affected by gravity is positioned by a mesh wall
+# It is given velocity so it should slide alongside the wall
+
 ## Define event times in seconds
 variable time_run       equal 0.30      # Run time for particles
 variable time_sample    equal 0.002	# Sample time during run images
@@ -8,10 +11,9 @@ variable time_save      equal 5		# Auto-save time
 variable time_thermo    equal 1		# Atom and thermal reporting time
 
 ## Define operating conditions
-variable vin            equal 0.5       # Collision velocity
+variable vin            equal 2.0       # Collision velocity
 variable c_orientation string '1 0 0'   # Colliding particle orientation 
 variable angle          equal 30.0        # Angle
-
 
 ## Define particle and wall properties
 variable Pd           equal 1500     # Tablet density
@@ -70,8 +72,8 @@ newton		off
 communicate	single vel yes
 soft_particles yes
 
-# Processors lay out
-processors 1 1 1
+# Processors lay out # Allow for testing multiple processors
+processors 1 2 2
 
 # Declare domain
 region		reg block -0.15 0.15 -0.15 0.15 0.0 0.2 units box
@@ -84,6 +86,9 @@ neighbor      0.003 bin
 neigh_modify  delay 0
 
 ### Setup
+
+# Gravity
+fix           grav all gravity 9.81 vector 0.0 0.0 1.0
 
 # Material and interaction properties required
 # Material properties required for new pair styles
@@ -103,8 +108,8 @@ fix          cad1 all mesh/surface file meshes/wall.stl type 1 curvature 1e-5
 fix          mixer all wall/gran model ${c_model} mesh n_meshes 1 meshes cad1
 						
 # Particle insertion
-create_atoms 1 single 0.0 0.0 0.05
-set atom 1 type 1 shape ${Pr1} ${Pr2} ${Pl} blockiness ${blockiness1} ${blockiness2} density ${Pd} vz ${vin} quat ${c_orientation} ${angle} 
+create_atoms 1 single 0.0 0.0 0.147768
+set atom 1 type 1 shape ${Pr1} ${Pr2} ${Pl} blockiness ${blockiness1} ${blockiness2} density ${Pd} vx ${vin}
 
 						
 # Define the physics
@@ -115,9 +120,6 @@ group		nve_group region reg
 
 # Integrator
 fix		integr all nve/superquadric integration_scheme 1
-
-# Gravity, 
-fix           grav all gravity 9.81 vector 0.0 0.0 1.0
 
 # Timestep (keep < 20% T_Rayleigh)
 timestep      ${dt}
@@ -131,6 +133,15 @@ thermo_modify lost ignore norm no
 fix           ctg all check/timestep/gran 1 0.01 0.01
 run           1
 unfix         ctg
+
+# Our own fix
+fix my all collision/tracker 1000 raw data/data*.csv &
+                            cpoctant 10 10 10 &
+                            range full      octo/full_*.csv &
+                            range 3 100     octo/3_*.csv &
+                            range 1 100     octo/1_*.csv &
+                            range 0.5 100   octo/05_*.csv &
+                            type permesh
 
 # Save simulation to be restarted
 restart       ${saveOutEvery} poly.restart poly.restart
