@@ -1,0 +1,191 @@
+### Continuous Coater Simulation
+
+### This simulation involves inserting a volume of particles in a volume inside 
+### a pan coater and move pan coater with certain speed
+
+## Define event times in seconds
+variable time_prerun    equal 1		# Run time for filling and getting particles into steady state
+variable time_run       equal 1         # Run time for particles to collect information
+variable time_sample    equal 0.02	# Sample time during run images
+variable time_sample1   equal 0.02	# Sample time during run contacts
+variable time_save      equal 2		# Auto-save time
+variable time_thermo    equal 1		# Atom and thermal reporting time
+
+## Define operating conditions
+variable particle_ini equal 300 #1500        # Particles to add in the system keep it between 1500 and 3000 for normal operation
+variable rpm          equal 22.0        # Agitation speed in rpm keep it between 12 and 22
+
+## Define particle and wall properties
+variable Pd           equal 1500     # Tablet density
+variable Pr1          equal 0.0015   # Tablet radius 1
+variable Pr2          equal 0.0015   # Tablet radius 2
+variable Pl	      equal 0.005  # Tablet length
+variable blockiness1  equal 4
+variable blockiness2  equal 2
+
+# Young Modulus for wall (Yw) and particle (Yp)
+variable Yw equal 2.5e+6
+variable Yp equal 7.8e+6
+
+# Poisson ratio for wall (pr_w) and particle (pr_p)
+variable pr_w equal 0.30
+variable pr_p equal 0.25
+
+# Friction coefficient wall-wall (cf_ww), particle-wall (cf_pw) a
+# and particle-particle (cf_pp)
+variable cf_ww equal 0.5
+variable cf_pw equal 0.5
+variable cf_pp equal 0.5
+
+# Coefficient of restitution wall-wall (cor_ww), particle-wall (cor_pw)
+# and particle-particle (cor_pp)
+variable cor_ww equal 0.5
+variable cor_pw equal 0.5
+variable cor_pp equal 0.5
+
+## Define contact model, uncomment the one that proceeds, comment the others
+# 1 Hertz Mindl contact model with cohesion and rolling friction
+variable c_model string 'hertz tangential history surface superquadric'
+
+### Calculation of other variables
+
+## Define simulation variables
+# Calculation of Rayleight t
+variable Rayleigh_t equal 3.1416*${Pr1}/(0.8766+0.163*${pr_p})*sqrt(2*${Pd}*(1+${pr_p})/${Yp})
+variable f_ray      equal 0.075   # fraction of Rayleight time for time step
+variable dt         equal ${f_ray}*${Rayleigh_t} # Time step based on fraction % Rayleight time
+
+# Calculations based on steps
+variable nStepsPreRun   equal (${time_prerun}-${time_prerun}%${dt})/${dt}
+variable nStepsRun      equal (${time_run}-${time_run}%${dt})/${dt}
+variable additionTime   equal (1.0-1.0%${dt})/${dt}
+variable writeOutEvery  equal (${time_sample}-${time_sample}%${dt})/${dt}
+variable writeOutEvery1 equal (${time_sample1}-${time_sample1}%${dt})/${dt}
+variable saveOutEvery   equal (${time_save}-${time_save}%${dt})/${dt}
+variable thermofreq     equal (${time_thermo}-${time_thermo}%${dt})/${dt}
+
+# Calculations
+variable cycle_time    equal 60/${rpm}         # Period time for rotational speed
+variable sub_part_ini  equal (${particle_ini}-${particle_ini}%1)/1  # Particle will be dosed in 3 seconds 3 batches with different id
+
+# Preliminaries
+units         si
+atom_style    superquadric
+atom_modify   map array
+boundary      f f f
+newton        off
+communicate   single vel yes
+soft_particles yes
+
+# Processors lay out
+processors 1 1 4
+
+# Declare domain
+region        reg block -0.155 0.155 -0.155 0.155 -0.15 0.15 units box
+create_box    2 reg
+
+#read_restart poly.restart
+
+# Neighbor listing
+neighbor      0.003 bin
+neigh_modify  delay 0
+
+### Setup
+
+# Material and interaction properties required
+#Material properties required for new pair styles
+fix 	m1 all property/global youngsModulus peratomtype ${Yw} ${Yp}
+fix 	m2 all property/global poissonsRatio peratomtype ${pr_w} ${pr_p}
+fix 	m3 all property/global coefficientRestitution peratomtypepair 2 &
+						${cor_ww} ${cor_pw} &
+						${cor_pw} ${cor_pp}
+fix   m4 all property/global coefficientFriction peratomtypepair 2 &
+ 						${cf_ww} ${cf_pw} &
+						${cf_pw} ${cf_pp}
+
+# Particle insertion
+fix pts1 all particletemplate/superquadric 14387537 atom_type 2 density constant ${Pd}  &
+    shape constant ${Pr1} ${Pr2} ${Pl} blockiness constant ${blockiness1} ${blockiness2}
+fix pdd1 all particledistribution/discrete 14387533 1 pts1 1
+
+region       factory_ini cylinder z 0.0 0.0 0.1 -0.06 0.06
+
+# Import mesh from cad:
+fix          cad1 all mesh/surface file meshes/drum.stl type 1 curvature 1e-5
+fix          cad2 all mesh/surface file meshes/baffle.stl type 1 curvature 1e-5
+
+# Use the imported mesh as granular wall
+fix          mixer all wall/gran model ${c_model} mesh n_meshes 2 meshes cad1 cad2
+
+# Define the physics
+pair_style   gran model ${c_model}
+pair_coeff   * *
+
+group		nve_group region reg
+
+# Compute forces and stresses
+#compute pcontacts all pair/gran/local pos vel force contactArea
+#compute wcontacts all wall/gran/local pos vel force contactArea
+
+### Detailed settings
+
+# Integrator
+fix		integr all nve/superquadric integration_scheme 1
+
+# Gravity, 
+fix           grav all gravity 9.81 vector 0.0 -1.0 0.0
+
+# Timestep (keep < 20% T_Rayleigh)
+timestep      ${dt}
+
+# Thermodynamic output settings
+thermo_style  custom step atoms ke cpu cpuremain
+thermo        ${thermofreq}
+thermo_modify lost ignore norm no
+
+# Check time step and initialize dump file
+fix           ctg all check/timestep/gran 1 0.01 0.01
+run           1
+unfix         ctg
+
+# Save simulation to be restarted
+restart       ${saveOutEvery} poly.restart poly.restart
+
+### Execution and further settings
+# Addition of first batch
+fix           ins_1 all insert/rate/region seed 14387587 distributiontemplate pdd1 &
+              nparticles ${sub_part_ini} particlerate ${sub_part_ini}/2 & 
+              insert_every 1000 overlapcheck yes region factory_ini
+run           ${additionTime} # run for 1 seconds to add the particles.
+
+
+# Rotate the shafts
+fix           movecad1 all move/mesh mesh cad1 rotate origin 0. 0. 0. &
+              axis 0. 0. 1. period ${cycle_time} #
+fix           movecad2 all move/mesh mesh cad2 rotate origin 0. 0. 0. &
+              axis 0. 0. 1. period ${cycle_time} #
+
+              
+              
+# Run to time_run sec to equilibrate system
+run           ${nStepsPreRun} 
+reset_timestep 0
+
+# Add our FIX
+fix           my all collision/tracker 100 file data/data*.csv cpoctant 60 range 0.5 100 octo/05_*.csv
+fix his1 all ave/histo 1 1000 1000 0.0 4.0 40 f_my[1] mode vector file histo/relhisto.gram ave running
+fix his2 all ave/histo 1 1000 1000 0.0 4.0 40 f_my[2] mode vector file histo/tanhisto.gram ave running
+
+# Create imaging information
+dump          dumpstl all stl ${writeOutEvery} post/stl*.stl
+dump          dmp all custom ${writeOutEvery} post1/rigid*.dump &
+              id type x y z quat1 quat2 quat3 quat4 vx vy vz fx fy fz blockiness1 blockiness2
+dump_modify   dmp label version_01
+
+#
+#dump         dumppcontacts all local/gran/vtk ${writeOutEvery1} post/coll_part*.vtp pcontacts 
+#dump         dumpwcontacts all local/gran/vtk ${writeOutEvery1} post/coll_wall*.vtp wcontacts
+
+# Run to time_run sec to equilibrate system
+run           ${nStepsRun} 
+
