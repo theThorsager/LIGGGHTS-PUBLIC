@@ -79,6 +79,10 @@ elif args.files:
     expanded = [glob.glob(f) for f in args.files]
     onlyfiles = [f for f_list in expanded for f in f_list if isfile(f)]
 
+if len(onlyfiles) == 0:
+    print('No files found')
+    sys.exit(1)
+
 xSide = np.zeros([100, 100], dtype=int)
 ySide = np.zeros([100, 100], dtype=int)
 zSide = np.zeros([100, 100], dtype=int)
