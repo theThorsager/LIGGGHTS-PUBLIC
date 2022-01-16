@@ -107,8 +107,7 @@ class FixCollisionTracker : public Fix {
   bool permesh = 0;
   bool store_particle = 1;
   bool store_wall = 1;
-  int othergroupbit;
-  bool useothergroup = 0;
+  int othergroupbit = 1; // 1 is "all"
 
   int fixbitmask_ = 0;
 

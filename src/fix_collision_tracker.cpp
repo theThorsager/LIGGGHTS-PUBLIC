@@ -251,7 +251,6 @@ FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
       int igroup = group->find(arg[iarg+1]);
       if (igroup == -1) error->all(FLERR,"Could not find fixcollisiontrackers othergroup fix group ID");
       othergroupbit = group->bitmask[igroup];
-      useothergroup = 1;
 
       iarg += 2;
     }
@@ -894,9 +893,9 @@ void FixCollisionTracker::resolve_contact_status(SurfacesIntersectData& sidata)
   // Get local atom information
   int *mask = atom->mask;
 
-  if ((mask[sidata.i] & groupbit) && (!useothergroup || mask[sidata.j] & othergroupbit))
+  if ((mask[sidata.i] & groupbit) && (mask[sidata.j] & othergroupbit))
     store_data(sidata.i, vels[0], vels[1], point_of_contact);
-  if (jislocal && (mask[sidata.j] & groupbit) && (!useothergroup || mask[sidata.i] & othergroupbit))
+  if (jislocal && (mask[sidata.j] & groupbit) && (mask[sidata.i] & othergroupbit))
     store_data(sidata.j, vels[0], vels[1], point_of_contact+3);
 } 
 
