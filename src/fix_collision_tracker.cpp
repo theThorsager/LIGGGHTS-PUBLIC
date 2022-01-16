@@ -311,6 +311,32 @@ FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
     }
   }
 
+
+
+  // find an avalible fixbitmap_
+  int tempbitmask = 0;
+  int n_thisfix = modify->n_fixes_style("collision/tracker");
+  for (int ifix = 0; ifix < n_thisfix; ++ifix)
+  {
+    FixCollisionTracker *other = static_cast<FixCollisionTracker*>(modify->find_fix_style("collision/tracker",ifix));
+    tempbitmask |= other->fixbitmask();
+  }
+  int newbitmask = 1;
+  while (newbitmask & tempbitmask)
+    newbitmask = newbitmask << 1;
+
+  if (!newbitmask)
+  {
+    int shift = n_thisfix % ( sizeof(int)*8 );
+    newbitmask = 1 << shift;
+    if (me == 0)
+    {
+      char errstr[512];
+      sprintf(errstr, "There are too many fix collision/tracker's. In case there is overlapp of the particle interactions they evaluate inconsistencies may occure for this and further fixes. fix_id: %s index: %i bitmask: %i", id, shift, newbitmask);
+      error->warning(FLERR, errstr);
+    }
+  }
+  fixbitmask_ = newbitmask;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -629,7 +655,8 @@ void FixCollisionTracker::post_force(int vflag)
               {
                 double * contact_history = fix_contact->contacthistory(iPart, j);
 
-                if (contact_history && contact_history[pre_particles_were_in_contact_offset] == 0)
+                int * pre_contact_as_int = (int*) (contact_history + pre_particles_were_in_contact_offset); //Only undefined to use NULL pointer, not to offset it
+                if (contact_history && !(*pre_contact_as_int & fixbitmask_))
                 {
                   int iTri = mesh->map(idTri, 0); // can it be something else than 0? the implication is that one idTri can have more than one iTri
                   
@@ -649,10 +676,11 @@ void FixCollisionTracker::post_force(int vflag)
 
                     // contact_history is not used by wall - particle calculations, but it is zeroed out between contacts
                     // We take advantage of that by setting pre_particles_were_in_contact_offset to 1
-                    contact_history[pre_particles_were_in_contact_offset] = 1;
+                    //contact_history[pre_particles_were_in_contact_offset] = 1;
+                    *pre_contact_as_int |= fixbitmask_;
                   }
                 }
-                else if (contact_history && contact_history[pre_particles_were_in_contact_offset] == 1)
+                else if (contact_history && (*pre_contact_as_int & fixbitmask_))
                 {
                   // Particle is in contact according to contact history
                   current_contact = 1;
@@ -691,7 +719,8 @@ void FixCollisionTracker::post_force(int vflag)
 
 
             double * contact_history = wall_history[iPart];
-            if (contact_history && contact_history[pre_particles_were_in_contact_offset] == 0)
+            int * pre_contact_as_int = (int*) (contact_history + pre_particles_were_in_contact_offset); //Only undefined to use NULL pointer, not to offset it
+            if (contact_history && !(*pre_contact_as_int & fixbitmask_))
             {
               double delta[3];
               double deltan = fwg->primitiveWall()->resolveContact(atom->x[iPart], vectorMax3D(atom->shape[iPart]), delta);
@@ -709,7 +738,8 @@ void FixCollisionTracker::post_force(int vflag)
                   resolve_primitive_contact_status(iPart, closestPoint);
             
                   // Less than sure this isn't used...  
-                  contact_history[pre_particles_were_in_contact_offset] = 1;
+                  // contact_history[pre_particles_were_in_contact_offset] = 1;
+                  *pre_contact_as_int |= fixbitmask_;
                   // But it is set to zero when the contact is lifted
                 }
               }
@@ -787,10 +817,15 @@ inline bool FixCollisionTracker::check_collision(SurfacesIntersectData& sidata)
   double *const particles_were_in_contact = &sidata.contact_history[particles_were_in_contact_offset];
   double *const pre_particles_were_in_contact = &sidata.contact_history[pre_particles_were_in_contact_offset];
 
-  bool pre_intersect = *pre_particles_were_in_contact == SURFACES_INTERSECT;
+  int *pre_contact_as_int = (int*) pre_particles_were_in_contact;
+  
+  bool pre_intersect = *pre_contact_as_int & fixbitmask_;
   bool intersect = *particles_were_in_contact == SURFACES_INTERSECT;
- 
-  *pre_particles_were_in_contact = *particles_were_in_contact; 
+
+  if (intersect)
+    *pre_contact_as_int |= fixbitmask_;
+  else
+    *pre_contact_as_int &= ~fixbitmask_;
   
   return intersect && !pre_intersect;
 }

@@ -72,6 +72,10 @@ class FixCollisionTracker : public Fix {
   void compute_normal(SurfacesIntersectData &);
   void compute_normal_wall(const int, const double*, double*);
   void compute_relative_velocity(SurfacesIntersectData &, double*, double*);
+
+  inline int fixbitmask()
+  { return fixbitmask_; }
+
  private:
 
   enum {SURFACES_FAR, SURFACES_CLOSE, SURFACES_INTERSECT};
@@ -105,6 +109,8 @@ class FixCollisionTracker : public Fix {
   bool store_wall = 1;
   int othergroupbit;
   bool useothergroup = 0;
+
+  int fixbitmask_ = 0;
 
   double shape[3];
   double blockiness[2];
