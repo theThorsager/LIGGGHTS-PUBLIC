@@ -73,6 +73,9 @@ using namespace LIGGGHTS;
 using namespace ContactModels;
 using namespace FixConst;
 
+
+#ifdef SUPERQUADRIC_ACTIVE_FLAG // So LIGGGHTS can be compiled without superquadric flag
+
 /* ---------------------------------------------------------------------- */
 
 FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
@@ -1140,3 +1143,4 @@ int FixCollisionTracker::unpack_exchange(int nlocal, double *buf)
   }
   return n_meshes;
 }
+#endif

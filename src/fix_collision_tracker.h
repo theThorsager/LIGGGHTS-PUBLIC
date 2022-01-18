@@ -38,7 +38,7 @@
     Copyright 2012-     DCS Computing GmbH, Linz
     Copyright 2009-2012 JKU Linz
 ------------------------------------------------------------------------- */
-
+#ifdef SUPERQUADRIC_ACTIVE_FLAG
 #ifdef FIX_CLASS
 
 FixStyle(collision/tracker,FixCollisionTracker)
@@ -150,5 +150,6 @@ class FixCollisionTracker : public Fix {
 
 }
 
+#endif
 #endif
 #endif
