@@ -1,0 +1,4 @@
+*.dump
+lmp_auto
+log.liggghts
+stl*.stl

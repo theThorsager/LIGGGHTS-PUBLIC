@@ -79,6 +79,7 @@ namespace ContactModels
         error->one(FLERR,"Applying surface model superquadric to a non-superquadric particle!");
       inequality_start_offset = hsetup->add_history_value("inequality_obb","0");
       particles_were_in_contact_offset = hsetup->add_history_value("particles_were_in_contact","0");
+      hsetup->add_history_value("pre_particles_were_in_contact","0");
       contact_point_offset = hsetup->add_history_value("cpx", "0");
       cmb->add_history_offset("contact_point_offset", contact_point_offset);
       hsetup->add_history_value("cpy", "0");
