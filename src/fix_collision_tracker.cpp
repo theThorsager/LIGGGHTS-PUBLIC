@@ -235,11 +235,11 @@ FixCollisionTracker::FixCollisionTracker(LAMMPS *lmp, int narg, char **arg) :
         store_particle = 0; 
         store_wall = 1; 
       }
-      if(strcmp(arg[iarg+1],"particle") == 0) {
+      else if(strcmp(arg[iarg+1],"particle") == 0) {
         store_particle = 1; 
         store_wall = 0; 
       }
-      if(strcmp(arg[iarg+1],"permesh") == 0) {
+      else if(strcmp(arg[iarg+1],"permesh") == 0) {
         permesh = 1;
       }
       else
